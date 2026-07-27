@@ -170,14 +170,20 @@ systemd/        user units
 
 ## Git
 
-The repository is private and lives at
-`git@github.com:remcostoeten/remcorder.git`, with `main` as the default branch.
+The repository is private: <https://github.com/remcostoeten/remcorder>, default
+branch `main`, cloned over HTTPS with the `gh` credential helper.
 
 ```sh
-git clone git@github.com:remcostoeten/remcorder.git
+gh repo clone remcostoeten/remcorder     # or: git clone https://github.com/remcostoeten/remcorder.git
 cd remcorder
 ./scripts/pre-reqs.sh
 make check
+```
+
+To use SSH instead:
+
+```sh
+git remote set-url origin git@github.com:remcostoeten/remcorder.git
 ```
 
 Work on a branch, never straight on `main`:
