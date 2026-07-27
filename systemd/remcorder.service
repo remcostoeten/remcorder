@@ -1,0 +1,14 @@
+[Unit]
+Description=Remcorder GPU-accelerated Wayland screen recorder
+Documentation=https://github.com/remcostoeten/recorder
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/remcorderd
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target

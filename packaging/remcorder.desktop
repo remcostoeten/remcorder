@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Remcorder
+GenericName=Screen Recorder
+Comment=GPU-accelerated screen recording for Wayland
+Exec=remcorder
+Icon=remcorder
+Terminal=false
+Categories=AudioVideo;Recorder;
+Keywords=screen;recording;capture;wayland;gpu;
+StartupNotify=true

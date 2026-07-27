@@ -1,0 +1,13 @@
+[Unit]
+Description=Remcorder status overlay
+After=remcorder.service
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/qml6 %h/.local/share/remcorder/overlay/main.qml -- %t/remcorder/state.json
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target

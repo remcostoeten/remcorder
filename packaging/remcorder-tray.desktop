@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Remcorder (tray)
+GenericName=Screen Recorder
+Comment=Keep Remcorder in the system tray, ready to record
+Exec=remcorder --tray
+Icon=remcorder
+Terminal=false
+Categories=AudioVideo;Recorder;
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
