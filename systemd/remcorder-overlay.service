@@ -5,7 +5,7 @@ PartOf=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/qml6 %h/.local/share/remcorder/overlay/main.qml -- %t/remcorder/state.json
+ExecStart=%h/.local/bin/remcorder-overlay %t/remcorder/state.json
 Restart=on-failure
 RestartSec=2
 
