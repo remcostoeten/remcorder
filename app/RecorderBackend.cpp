@@ -1238,7 +1238,7 @@ QString RecorderBackend::socketPath() const
     QString runtime = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
     if (runtime.isEmpty())
         runtime = QDir::tempPath() + QStringLiteral("/remcorder-%1").arg(getuid());
-    return QDir(runtime).filePath(QStringLiteral("remcorder/recorder.sock"));
+    return QDir(runtime).filePath(QStringLiteral("remcorder/remcorder.sock"));
 }
 
 QVariantList RecorderBackend::discover(const QString &argument, bool inputs) const

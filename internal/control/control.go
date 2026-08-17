@@ -45,13 +45,13 @@ type Response struct {
 }
 
 func DefaultSocketPath() (string, error) {
-	if path := os.Getenv("RECORDER_SOCKET"); path != "" {
+	if path := os.Getenv("REMCORDER_SOCKET"); path != "" {
 		return path, nil
 	}
 	if runtimeDirectory := os.Getenv("XDG_RUNTIME_DIR"); runtimeDirectory != "" {
-		return filepath.Join(runtimeDirectory, "remcorder", "recorder.sock"), nil
+		return filepath.Join(runtimeDirectory, "remcorder", "remcorder.sock"), nil
 	}
-	return filepath.Join(os.TempDir(), fmt.Sprintf("remcorder-%d", os.Getuid()), "recorder.sock"), nil
+	return filepath.Join(os.TempDir(), fmt.Sprintf("remcorder-%d", os.Getuid()), "remcorder.sock"), nil
 }
 
 func Call(socketPath string, request Request, timeout time.Duration) (Response, error) {

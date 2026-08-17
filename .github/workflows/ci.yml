@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [daddy]
+  pull_request:
+    branches: [daddy]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm --needed \
+            git cmake go \
+            qt6-base qt6-declarative qt6-multimedia
+
+      - uses: actions/checkout@v4
+
+      - name: Put qt6 tools on PATH
+        run: echo "/usr/lib/qt6/bin" >> "$GITHUB_PATH"
+
+      - name: make check
+        run: make check

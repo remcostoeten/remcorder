@@ -2,3 +2,7 @@
 /remcorderd
 /remcorderctl
 *.mp4
+packaging/pkgbuild/src/
+packaging/pkgbuild/pkg/
+packaging/pkgbuild/*.tar.gz
+packaging/pkgbuild/*.pkg.tar.zst

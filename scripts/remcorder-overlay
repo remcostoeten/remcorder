@@ -1,0 +1,49 @@
+#!/bin/sh
+# The Qt 6 QML runner and the overlay document have no stable path across
+# distros (qml6 on Arch, qml-qt6 on Fedora, /usr/lib/qt6/bin/qml on Debian),
+# so this launcher resolves both at runtime instead of hardcoding them.
+set -eu
+
+find_runner() {
+    for name in qml6 qml-qt6; do
+        if command -v "$name" >/dev/null 2>&1; then
+            command -v "$name"
+            return 0
+        fi
+    done
+    for path in /usr/lib/qt6/bin/qml /usr/lib64/qt6/bin/qml; do
+        if [ -x "$path" ]; then
+            echo "$path"
+            return 0
+        fi
+    done
+    if command -v qml >/dev/null 2>&1; then
+        command -v qml
+        return 0
+    fi
+    echo "remcorder-overlay: no Qt 6 QML runner (qml6, qml-qt6, or qml) found" >&2
+    return 127
+}
+
+find_overlay() {
+    data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+    for path in \
+        "$data_home/remcorder/overlay/main.qml" \
+        /usr/local/share/remcorder/overlay/main.qml \
+        /usr/share/remcorder/overlay/main.qml; do
+        if [ -f "$path" ]; then
+            echo "$path"
+            return 0
+        fi
+    done
+    echo "remcorder-overlay: overlay/main.qml is not installed" >&2
+    return 66
+}
+
+if [ "${1:-}" = "--which" ]; then
+    find_runner
+    exit
+fi
+
+state="${1:-${XDG_RUNTIME_DIR:-/tmp}/remcorder/state.json}"
+exec "$(find_runner)" "$(find_overlay)" -- "$state"

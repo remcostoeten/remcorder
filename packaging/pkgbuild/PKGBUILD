@@ -1,0 +1,55 @@
+# Maintainer: Remco Stoeten <remcostoeten@hotmail.com>
+pkgname=remcorder
+pkgver=0.0.5
+pkgrel=1
+pkgdesc="Native control center and background service for GPU-accelerated screen recording on Wayland"
+arch=('x86_64')
+url="https://github.com/remcostoeten/remcorder"
+license=('MIT')
+depends=('qt6-base' 'qt6-declarative' 'qt6-multimedia' 'gpu-screen-recorder' 'systemd')
+optdepends=('ffmpeg: motion-blur copies and trim export'
+            'libpulse: microphone meter and gain control')
+makedepends=('cmake' 'go' 'qt6-declarative')
+source=("remcorder-$pkgver.tar.gz")
+sha256sums=('SKIP')
+options=('!debug')
+
+build() {
+  cd "remcorder-$pkgver"
+  export CGO_ENABLED=1
+  go build -trimpath -o remcorderd ./cmd/remcorderd
+  go build -trimpath -o remcorderctl ./cmd/remcorderctl
+  cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+  cmake --build build
+}
+
+check() {
+  cd "remcorder-$pkgver"
+  go test ./...
+}
+
+package() {
+  cd "remcorder-$pkgver"
+
+  install -Dm755 remcorderd "$pkgdir/usr/bin/remcorderd"
+  install -Dm755 remcorderctl "$pkgdir/usr/bin/remcorderctl"
+  install -Dm755 build/remcorder "$pkgdir/usr/bin/remcorder"
+  install -Dm755 scripts/remcorder-overlay "$pkgdir/usr/bin/remcorder-overlay"
+
+  install -Dm644 overlay/main.qml \
+    "$pkgdir/usr/share/remcorder/overlay/main.qml"
+  install -Dm644 packaging/remcorder.desktop \
+    "$pkgdir/usr/share/applications/remcorder.desktop"
+  install -Dm644 packaging/remcorder.svg \
+    "$pkgdir/usr/share/icons/hicolor/scalable/apps/remcorder.svg"
+  install -Dm644 LICENSE \
+    "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+
+  # systemd/*.service ship the ~/.local install paths used by `make install`;
+  # this package installs to /usr instead, so rewrite the paths it drives at.
+  install -d "$pkgdir/usr/lib/systemd/user"
+  sed 's#%h/\.local/bin/remcorderd#/usr/bin/remcorderd#' \
+    systemd/remcorder.service > "$pkgdir/usr/lib/systemd/user/remcorder.service"
+  sed 's#%h/\.local/bin/remcorder-overlay#/usr/bin/remcorder-overlay#' \
+    systemd/remcorder-overlay.service > "$pkgdir/usr/lib/systemd/user/remcorder-overlay.service"
+}

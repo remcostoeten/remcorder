@@ -23,6 +23,7 @@ install: check
 	go build -o "$(PREFIX)/bin/remcorderd" ./cmd/remcorderd
 	go build -o "$(PREFIX)/bin/remcorderctl" ./cmd/remcorderctl
 	install -Dm755 build/remcorder "$(PREFIX)/bin/remcorder"
+	install -Dm755 scripts/remcorder-overlay "$(PREFIX)/bin/remcorder-overlay"
 	install -Dm644 overlay/main.qml "$(PREFIX)/share/remcorder/overlay/main.qml"
 	install -Dm644 packaging/remcorder.desktop "$(PREFIX)/share/applications/remcorder.desktop"
 	install -Dm644 packaging/remcorder.svg "$(PREFIX)/share/icons/hicolor/scalable/apps/remcorder.svg"
@@ -44,7 +45,7 @@ tray-off:
 uninstall:
 	systemctl --user disable --now remcorder.service || true
 	systemctl --user disable --now remcorder-overlay.service || true
-	rm -f "$(PREFIX)/bin/remcorderd" "$(PREFIX)/bin/remcorderctl" "$(PREFIX)/bin/remcorder"
+	rm -f "$(PREFIX)/bin/remcorderd" "$(PREFIX)/bin/remcorderctl" "$(PREFIX)/bin/remcorder" "$(PREFIX)/bin/remcorder-overlay"
 	rm -rf "$(PREFIX)/share/remcorder"
 	rm -f "$(PREFIX)/share/applications/remcorder.desktop"
 	rm -f "$(AUTOSTART_DIR)/remcorder-tray.desktop"
