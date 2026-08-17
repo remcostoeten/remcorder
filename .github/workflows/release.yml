@@ -19,7 +19,7 @@ jobs:
             git cmake go fakeroot binutils \
             qt6-base qt6-declarative qt6-multimedia gpu-screen-recorder systemd
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # The job runs as root inside the container while the workspace is owned
       # by the runner user, so git refuses to operate on it without this.

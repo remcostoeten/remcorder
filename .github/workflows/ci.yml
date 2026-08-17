@@ -17,7 +17,7 @@ jobs:
             git cmake go \
             qt6-base qt6-declarative qt6-multimedia
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Put qt6 tools on PATH
         run: echo "/usr/lib/qt6/bin" >> "$GITHUB_PATH"

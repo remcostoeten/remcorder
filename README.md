@@ -25,11 +25,31 @@ GPU-accelerated recording on Wayland.
 
 ## Install (Arch Linux)
 
+Every tagged release publishes a pacman package. This is the shortest path, and
+the one to prefer if you are not developing Remcorder:
+
+```sh
+gh release download --repo remcostoeten/remcorder --pattern '*.pkg.tar.zst'
+sudo pacman -U remcorder-*.pkg.tar.zst
+systemctl --user enable --now remcorder.service remcorder-overlay.service
+```
+
+The package installs to `/usr`, pulls in `gpu-screen-recorder` and the Qt 6
+runtime, and suggests `ffmpeg` and `libpulse` for motion blur, trimming, and the
+microphone meter. `gh` is required because the repository is private.
+
+To build from a checkout instead, which installs to `~/.local` and leaves the
+package alone:
+
 ```sh
 ./scripts/pre-reqs.sh
 make install
 systemctl --user enable --now remcorder.service remcorder-overlay.service
 ```
+
+`scripts/pre-reqs.sh` reports what is missing per distribution rather than
+installing anything behind your back; `scripts/packages.conf` holds the package
+names it maps to.
 
 Recordings default to the XDG Videos directory, under `Recordings`.
 
@@ -236,9 +256,73 @@ a Release CMake build, and `qmllint` over the QML. Build output lives in
 produced by a bare `make` and any stray `*.mp4` recordings — keep recordings out
 of the repository.
 
-Tags mark releases:
+## Continuous integration
+
+Two workflows run against the `daddy` branch.
+
+**CI** (`.github/workflows/ci.yml`) runs `make check` in an `archlinux:base-devel`
+container on every push and pull request — the same four steps you run locally,
+so a green local check means a green CI check.
+
+**Release** (`.github/workflows/release.yml`) fires on a `v*` tag. It runs
+`make check`, builds a source tarball with `git archive`, stamps `pkgver` from
+the tag, builds the package with `makepkg` as an unprivileged user, and uploads
+the `.pkg.tar.zst` and the PKGBUILD to a GitHub Release.
+
+Two things that build fine locally but not in the container, both already
+handled — do not remove them:
+
+- The job runs as root while the workspace belongs to the runner user, so `git`
+  rejects it as *dubious ownership*. The release workflow marks the workspace
+  safe before calling `git archive`.
+- The source tarball extracts inside a git tree owned by another user, so Go's
+  VCS stamping aborts the build. The PKGBUILD sets `GOFLAGS=-buildvcs=false`; a
+  release build takes its version from `pkgver`, not from git.
+
+## Releasing
+
+Releases are cut with [`releaser`](https://github.com/remcostoeten/releaser),
+configured by `releaser.config.json`. The version lives in **one** place —
+`pkgver` in `packaging/pkgbuild/PKGBUILD` — and `CMakeLists.txt` is kept in step
+by a match-counted replacement, so the two can never drift apart again.
+
+From a clean `daddy` that is in sync with origin:
 
 ```sh
-git tag -a v0.2.0 -m "Microphone monitoring and tray autostart"
-git push origin v0.2.0
+releaser plan --bump patch     # read-only: shows the plan and changes nothing
+releaser --bump patch          # execute after it asks
 ```
+
+That rewrites `pkgver`, syncs `CMakeLists.txt`, commits `chore(release): vX.Y.Z`,
+tags, and pushes the branch and the tag. The tag is what triggers the release
+workflow, so watch it and confirm the package was actually produced:
+
+```sh
+gh run watch "$(gh run list --workflow=release.yml --limit 1 --json databaseId -q '.[0].databaseId')"
+gh release view "v$(sed -n 's/^pkgver=//p' packaging/pkgbuild/PKGBUILD)"
+```
+
+Never edit `pkgver` by hand and never tag manually — both bypass the single
+source of truth and produce a tag whose PKGBUILD disagrees with it.
+
+If a release is interrupted partway, finish it rather than starting a new one:
+
+```sh
+releaser status
+releaser resume
+```
+
+To validate packaging changes without cutting a release, build the package the
+way CI does:
+
+```sh
+ver=$(sed -n 's/^pkgver=//p' packaging/pkgbuild/PKGBUILD)
+git archive --format=tar.gz --prefix="remcorder-$ver/" \
+  -o "packaging/pkgbuild/remcorder-$ver.tar.gz" HEAD
+(cd packaging/pkgbuild && makepkg --noconfirm --force)
+git clean -fdx packaging/pkgbuild
+```
+
+Run `git archive` from the repository root — from inside `packaging/pkgbuild` it
+silently archives only that subdirectory, and the build fails on missing
+sources.
