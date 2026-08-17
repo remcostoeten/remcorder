@@ -1,6 +1,6 @@
 # Maintainer: Remco Stoeten <remcostoeten@hotmail.com>
 pkgname=remcorder
-pkgver=0.0.6
+pkgver=0.0.7
 pkgrel=1
 pkgdesc="Native control center and background service for GPU-accelerated screen recording on Wayland"
 arch=('x86_64')
