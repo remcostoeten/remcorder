@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm --needed \
+            git cmake go fakeroot binutils \
+            qt6-base qt6-declarative qt6-multimedia gpu-screen-recorder systemd
+
+      - uses: actions/checkout@v4
+
+      - name: Put qt6 tools on PATH
+        run: echo "/usr/lib/qt6/bin" >> "$GITHUB_PATH"
+
+      - name: make check
+        run: make check
+
+      - name: Resolve version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build source tarball
+        run: |
+          git archive --format=tar.gz \
+            --prefix="remcorder-${{ steps.version.outputs.version }}/" \
+            -o "packaging/pkgbuild/remcorder-${{ steps.version.outputs.version }}.tar.gz" \
+            HEAD
+
+      - name: Set PKGBUILD version
+        run: |
+          sed -i "s/^pkgver=.*/pkgver=${{ steps.version.outputs.version }}/" \
+            packaging/pkgbuild/PKGBUILD
+
+      - name: Build pacman package
+        run: |
+          useradd -m builder
+          chown -R builder:builder packaging/pkgbuild
+          su builder -c 'cd packaging/pkgbuild && makepkg --noconfirm'
+
+      - name: Locate artifact
+        id: artifact
+        run: |
+          echo "path=$(find packaging/pkgbuild -maxdepth 1 -name '*.pkg.tar.zst')" >> "$GITHUB_OUTPUT"
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ steps.artifact.outputs.path }}
+            packaging/pkgbuild/PKGBUILD
