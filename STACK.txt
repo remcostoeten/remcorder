@@ -1,0 +1,143 @@
+================================================================================
+REMCORDER — TECH STACK, ARCHITECTURE & PROJECT LAYOUT
+================================================================================
+GPU-accelerated screen recorder for Wayland: a Go background daemon that owns
+the recording lifecycle, a Qt 6 / QML control center, a CLI client, and a
+click-through QML overlay. Linux-only, Arch-first.
+
+Repo:    github.com/remcostoeten/remcorder
+License: MIT
+Size:    ~5.000 lines across Go, C++, QML, shell
+
+
+--------------------------------------------------------------------------------
+1. LANGUAGES
+--------------------------------------------------------------------------------
+Go 1.26.4        Daemon + CLI. Stdlib only — zero third-party modules.
+C++20            Qt control-center backend (RecorderBackend, ~1.500 lines).
+QML (Qt Quick)   All UI: main window (~1.900 lines) + overlay (~200 lines).
+POSIX sh         Prerequisite installer and the overlay launcher.
+Make + CMake     Build orchestration.
+YAML             GitHub Actions CI/release.
+
+
+--------------------------------------------------------------------------------
+2. FRAMEWORKS & LIBRARIES
+--------------------------------------------------------------------------------
+Qt 6.5+          Core, Gui, Qml, Quick, QuickControls2, Multimedia, Network,
+                 Widgets. Multimedia drives the trim preview; Widgets provides
+                 the system tray; QSettings persists per-user config.
+Go stdlib        net (Unix sockets), encoding/json, os/exec, syscall,
+                 context, flag, sync.
+systemd (user)   Two units bound to graphical-session.target, Restart=on-failure.
+CMake 3.21+      qt_add_executable + qt_add_qml_module; -Wall -Wextra -Wpedantic.
+
+External binaries invoked at runtime (not linked):
+  gpu-screen-recorder   the actual capture engine — required
+  ffmpeg                motion-blur copies and trim export — optional
+  pactl                 microphone meter, gain, listen-back — optional
+  xdg-open              open recording / folder after stop
+
+
+--------------------------------------------------------------------------------
+3. ARCHITECTURE
+--------------------------------------------------------------------------------
+Four processes, deliberately decoupled so the recorder never dies with the UI.
+
+  ┌─────────────┐   ┌──────────────┐   ┌────────────────┐
+  │ remcorder   │   │ remcorderctl │   │ compositor     │
+  │ (Qt 6 GUI)  │   │ (CLI)        │   │ keybind        │
+  └──────┬──────┘   └──────┬───────┘   └───────┬────────┘
+         │                 │                   │
+         └────── JSON over Unix socket ────────┘
+                           │
+                  ┌────────▼─────────┐
+                  │   remcorderd     │  owns lifecycle, single source of truth
+                  │  (Go daemon)     │
+                  └───┬──────────┬───┘
+       spawns process │          │ atomic write
+                      ▼          ▼
+        gpu-screen-recorder    state.json  ──poll──►  overlay (QML, click-through)
+
+CONTROL PLANE
+  Socket: $XDG_RUNTIME_DIR/remcorder/remcorder.sock
+          (override with $REMCORDER_SOCKET; falls back to /tmp/remcorder-$UID/)
+  Protocol: one JSON Request in, one JSON Response out, per connection.
+  Actions: status | start | stop | toggle | pause | resume | toggle-pause
+  Defined in internal/control/control.go — shared by daemon, CLI, and GUI.
+
+STATE PLANE (one-way, read-only for consumers)
+  The daemon atomically rewrites a JSON snapshot in the runtime dir on every
+  state change. The overlay polls that file and never sends commands, so the
+  indicator can crash, restart, or be absent without touching a recording.
+
+RECORDER ENGINE (internal/recorder)
+  Wraps gpu-screen-recorder as a child process group. Pause/resume via signals
+  to the group; stop sends SIGINT so MP4 containers are finalized instead of
+  truncated. Stale sockets are cleaned on startup.
+
+DESIGN RULES ENFORCED BY THE LAYOUT
+  - The daemon is the only thing that knows recording state.
+  - UI is replaceable: GUI, CLI, and overlay are all just clients.
+  - Post-processing (motion blur, trim) always writes a NEW file
+    (-blur.mp4 / -trim.mp4); source recordings are never mutated.
+
+
+--------------------------------------------------------------------------------
+4. FOLDER STRUCTURE
+--------------------------------------------------------------------------------
+remcorder/
+├── app/                      Qt 6 control center
+│   ├── main.cpp              entry point, tray/--trim flag handling
+│   ├── RecorderBackend.h/cpp C++ bridge: socket calls, device discovery,
+│   │                         pactl mic control, ffmpeg jobs, QSettings
+│   └── qml/Main.qml          main window UI
+├── cmd/
+│   ├── remcorderd/main.go    daemon: flags, socket listener, state publisher
+│   └── remcorderctl/main.go  CLI client (--json, --delay, --open, --open-dir)
+├── internal/
+│   ├── recorder/             capture engine + lifecycle (has unit tests)
+│   └── control/              socket path resolution + request/response types
+├── overlay/main.qml          click-through "recording" indicator
+├── scripts/
+│   ├── pre-reqs.sh           distro-aware dependency installer
+│   ├── packages.conf         package routes: arch/debian/fedora/suse families
+│   └── remcorder-overlay     resolves qml6 / qml-qt6 / qt6/bin/qml at runtime
+├── systemd/                  remcorder.service, remcorder-overlay.service
+├── packaging/
+│   ├── *.desktop, *.svg      app entry, tray autostart entry, icon
+│   └── pkgbuild/PKGBUILD     Arch package (installs to /usr, rewrites units)
+├── .github/workflows/        ci.yml, release.yml
+├── CMakeLists.txt            Qt/C++ build
+├── Makefile                  all | gui | check | install | tray | uninstall
+└── go.mod                    module github.com/remcostoeten/remcorder
+
+
+--------------------------------------------------------------------------------
+5. BUILD, TEST & RELEASE
+--------------------------------------------------------------------------------
+make check      go test ./... + go vet ./... + Release CMake build + qmllint
+                → this is the pre-push gate; CI runs exactly this.
+make            builds remcorderd, remcorderctl, and the Qt GUI
+make install    installs to ~/.local, drops user units, daemon-reload
+make tray       install + autostart entry + relaunch into the tray
+make uninstall  removes binaries, units, desktop entries
+
+CI       .github/workflows/ci.yml — archlinux:base-devel container, runs
+         `make check` on push/PR to the default branch.
+RELEASE  .github/workflows/release.yml — on `v*` tags: check, git-archive
+         source tarball, stamp pkgver, makepkg as an unprivileged user,
+         upload the .pkg.tar.zst + PKGBUILD to a GitHub Release.
+
+Install targets: Arch family (packaged), Debian/Ubuntu, Fedora/RHEL, openSUSE
+(build deps only — gpu-screen-recorder must be installed manually there).
+
+
+--------------------------------------------------------------------------------
+6. CONVENTIONS
+--------------------------------------------------------------------------------
+Branching   never commit on the default branch; feature branches + PRs.
+Commits     Conventional Commits — type(scope): imperative summary, ≤72 chars.
+Tags        annotated vX.Y.Z tags trigger the packaging release.
+Ignored     build/, remcorderd, remcorderctl binaries, stray *.mp4.
+================================================================================
