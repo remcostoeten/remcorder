@@ -226,7 +226,7 @@ func writeResponse(writer io.Writer, response control.Response) {
 }
 
 func defaultOutputDirectory() (string, error) {
-	if value := strings.TrimSpace(os.Getenv("RECORDER_OUTPUT_DIR")); value != "" {
+	if value := strings.TrimSpace(os.Getenv("REMCORDER_OUTPUT_DIR")); value != "" {
 		return value, nil
 	}
 	if value := strings.TrimSpace(os.Getenv("XDG_VIDEOS_DIR")); value != "" {
