@@ -21,6 +21,11 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      # The job runs as root inside the container while the workspace is owned
+      # by the runner user, so git refuses to operate on it without this.
+      - name: Trust the workspace
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Put qt6 tools on PATH
         run: echo "/usr/lib/qt6/bin" >> "$GITHUB_PATH"
 
