@@ -17,8 +17,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/remcostoeten/recorder/internal/control"
-	"github.com/remcostoeten/recorder/internal/recorder"
+	"github.com/remcostoeten/remcorder/internal/control"
+	"github.com/remcostoeten/remcorder/internal/recorder"
 )
 
 func main() {

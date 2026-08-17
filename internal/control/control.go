@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/remcostoeten/recorder/internal/recorder"
+	"github.com/remcostoeten/remcorder/internal/recorder"
 )
 
 type Action string
