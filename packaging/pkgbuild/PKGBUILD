@@ -17,6 +17,9 @@ options=('!debug')
 build() {
   cd "remcorder-$pkgver"
   export CGO_ENABLED=1
+  # The tarball extracts inside a git tree owned by another user, so Go's VCS
+  # stamping aborts on it. A release build takes its version from pkgver anyway.
+  export GOFLAGS="-buildvcs=false"
   go build -trimpath -o remcorderd ./cmd/remcorderd
   go build -trimpath -o remcorderctl ./cmd/remcorderctl
   cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -25,6 +28,7 @@ build() {
 
 check() {
   cd "remcorder-$pkgver"
+  export GOFLAGS="-buildvcs=false"
   go test ./...
 }
 
