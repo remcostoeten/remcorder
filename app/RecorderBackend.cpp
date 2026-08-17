@@ -5,6 +5,7 @@
 #include <QAudioDevice>
 #include <QAudioSink>
 #include <QAudioSource>
+#include <QClipboard>
 #include <QCoreApplication>
 #include <QDesktopServices>
 #include <QDir>
@@ -215,6 +216,15 @@ void RecorderBackend::setMotionBlurStrength(const QString &value)
     }
     m_motionBlurStrength = value;
     saveSetting(QStringLiteral("motionBlurStrength"), value);
+    emit settingsChanged();
+}
+
+void RecorderBackend::setSoundCuesEnabled(bool value)
+{
+    if (value == m_soundCuesEnabled)
+        return;
+    m_soundCuesEnabled = value;
+    saveSetting(QStringLiteral("soundCuesEnabled"), value);
     emit settingsChanged();
 }
 
@@ -436,6 +446,19 @@ void RecorderBackend::openLastTrimmedRecording()
         QDesktopServices::openUrl(QUrl::fromLocalFile(m_lastTrimmedOutputFile));
 }
 
+void RecorderBackend::copyLastOutputPath()
+{
+    if (m_lastOutputFile.isEmpty())
+        return;
+    QGuiApplication::clipboard()->setText(m_lastOutputFile);
+}
+
+void RecorderBackend::openRecentRecording(const QString &path)
+{
+    if (!path.isEmpty() && QFileInfo::exists(path))
+        QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+}
+
 QString RecorderBackend::formatDuration(qint64 seconds) const
 {
     seconds = qMax<qint64>(0, seconds);
@@ -530,19 +553,20 @@ void RecorderBackend::applyResponse(const QJsonObject &response)
     emit stateChanged();
     updateTray();
 
-    if (!wasRecording && m_recording)
+    if (!wasRecording && m_recording) {
         setMicPlaybackEnabled(false);
+        playStartCue();
+    }
 
-    if (wasRecording && !m_recording && !m_lastOutputFile.isEmpty()
-        && m_lastOutputFile != previousLast && m_tray) {
-        m_tray->showMessage(QStringLiteral("Recording saved"),
-                            QFileInfo(m_lastOutputFile).fileName(),
-                            QSystemTrayIcon::Information, 5000);
+    const bool justFinished = wasRecording && !m_recording
+        && !m_lastOutputFile.isEmpty() && m_lastOutputFile != previousLast;
+    if (justFinished) {
+        playStopCue();
+        notifyTray(QStringLiteral("Recording saved"), m_lastOutputFile);
+        rememberRecentRecording(m_lastOutputFile);
     }
-    if (wasRecording && !m_recording && !m_lastOutputFile.isEmpty()
-        && m_lastOutputFile != previousLast && m_motionBlurEnabled) {
+    if (justFinished && m_motionBlurEnabled)
         startMotionBlur(m_lastOutputFile, completedDuration);
-    }
 }
 
 void RecorderBackend::setError(const QString &message)
@@ -588,6 +612,12 @@ void RecorderBackend::loadSettings()
         QStringLiteral("lastTrimmedOutputFile")).toString();
     if (!QFileInfo::exists(m_lastTrimmedOutputFile))
         m_lastTrimmedOutputFile.clear();
+    m_soundCuesEnabled = settings.value(QStringLiteral("soundCuesEnabled"), true).toBool();
+    m_recentRecordings.clear();
+    for (const QVariant &entry : settings.value(QStringLiteral("recentRecordings")).toList()) {
+        if (QFileInfo::exists(entry.toString()))
+            m_recentRecordings.append(entry);
+    }
 
     const QString movies = QStandardPaths::writableLocation(QStandardPaths::MoviesLocation);
     m_outputDirectory = settings.value(
@@ -618,6 +648,8 @@ void RecorderBackend::setupTray()
     m_openAction = m_trayMenu->addAction(QStringLiteral("Open recordings folder"));
     m_openBlurAction = m_trayMenu->addAction(QStringLiteral("Open last blurred copy"));
     m_openTrimAction = m_trayMenu->addAction(QStringLiteral("Open last trimmed copy"));
+    m_copyPathAction = m_trayMenu->addAction(QStringLiteral("Copy last recording path"));
+    m_recentMenu = m_trayMenu->addMenu(QStringLiteral("Recent recordings"));
     m_quitAction = m_trayMenu->addAction(QStringLiteral("Quit"));
 
     connect(m_showAction, &QAction::triggered, this, &RecorderBackend::requestShow);
@@ -634,15 +666,21 @@ void RecorderBackend::setupTray()
             this, &RecorderBackend::openLastBlurredRecording);
     connect(m_openTrimAction, &QAction::triggered,
             this, &RecorderBackend::openLastTrimmedRecording);
+    connect(m_copyPathAction, &QAction::triggered, this, &RecorderBackend::copyLastOutputPath);
     connect(m_quitAction, &QAction::triggered, qApp, &QCoreApplication::quit);
     connect(m_tray, &QSystemTrayIcon::activated, this, [this](QSystemTrayIcon::ActivationReason reason) {
         if (reason == QSystemTrayIcon::Trigger || reason == QSystemTrayIcon::DoubleClick)
             emit requestShow();
     });
+    connect(m_tray, &QSystemTrayIcon::messageClicked, this, [this] {
+        if (!m_lastNotificationPath.isEmpty())
+            QDesktopServices::openUrl(QUrl::fromLocalFile(m_lastNotificationPath));
+    });
 
     m_tray->setContextMenu(m_trayMenu);
     m_tray->setToolTip(QStringLiteral("Remcorder"));
     m_tray->show();
+    updateRecentMenu();
     updateTray();
 }
 
@@ -657,6 +695,7 @@ void RecorderBackend::updateTray()
     m_stopAction->setEnabled(m_serviceAvailable && m_recording);
     m_openBlurAction->setEnabled(!m_lastBlurredOutputFile.isEmpty() && !processing);
     m_openTrimAction->setEnabled(!m_lastTrimmedOutputFile.isEmpty() && !processing);
+    m_copyPathAction->setEnabled(!m_lastOutputFile.isEmpty());
     m_quitAction->setEnabled(!processing);
     if (m_processingTrim) {
         m_tray->setToolTip(QStringLiteral("Exporting trim · %1%").arg(m_trimProgress));
@@ -669,6 +708,55 @@ void RecorderBackend::updateTray()
     } else {
         m_tray->setToolTip(QStringLiteral("Remcorder · Ready"));
     }
+}
+
+void RecorderBackend::updateRecentMenu()
+{
+    if (!m_recentMenu)
+        return;
+    m_recentMenu->clear();
+    if (m_recentRecordings.isEmpty()) {
+        QAction *empty = m_recentMenu->addAction(QStringLiteral("No recordings yet"));
+        empty->setEnabled(false);
+        return;
+    }
+    for (const QVariant &entry : m_recentRecordings) {
+        const QString path = entry.toString();
+        QAction *action = m_recentMenu->addAction(QFileInfo(path).fileName());
+        connect(action, &QAction::triggered, this, [this, path] { openRecentRecording(path); });
+    }
+}
+
+void RecorderBackend::notifyTray(const QString &title, const QString &path)
+{
+    m_lastNotificationPath = path;
+    if (m_tray)
+        m_tray->showMessage(title, QFileInfo(path).fileName(), QSystemTrayIcon::Information, 5000);
+}
+
+void RecorderBackend::rememberRecentRecording(const QString &path)
+{
+    m_recentRecordings.removeAll(QVariant(path));
+    m_recentRecordings.prepend(path);
+    while (m_recentRecordings.size() > 5)
+        m_recentRecordings.removeLast();
+    saveSetting(QStringLiteral("recentRecordings"), m_recentRecordings);
+    emit recentRecordingsChanged();
+    updateRecentMenu();
+}
+
+void RecorderBackend::playStartCue()
+{
+    if (m_soundCuesEnabled)
+        QApplication::beep();
+}
+
+void RecorderBackend::playStopCue()
+{
+    if (!m_soundCuesEnabled)
+        return;
+    QApplication::beep();
+    QTimer::singleShot(140, qApp, [] { QApplication::beep(); });
 }
 
 void RecorderBackend::startMotionBlur(const QString &source, qint64 durationSeconds)
@@ -783,10 +871,7 @@ void RecorderBackend::finishMotionBlur(int exitCode, QProcess::ExitStatus status
         m_blurProgress = 100;
         setError({});
         if (m_tray) {
-            m_tray->showMessage(
-                QStringLiteral("Blurred copy ready"),
-                QFileInfo(m_blurOutputFile).fileName(),
-                QSystemTrayIcon::Information, 6000);
+            notifyTray(QStringLiteral("Blurred copy ready"), m_blurOutputFile);
         }
     } else {
         QFile::remove(m_blurTemporaryFile);
@@ -867,10 +952,7 @@ void RecorderBackend::finishTrim(int exitCode, QProcess::ExitStatus status)
         m_trimProgress = 100;
         setError({});
         if (m_tray) {
-            m_tray->showMessage(
-                QStringLiteral("Trimmed copy ready"),
-                QFileInfo(m_trimOutputFile).fileName(),
-                QSystemTrayIcon::Information, 6000);
+            notifyTray(QStringLiteral("Trimmed copy ready"), m_trimOutputFile);
         }
     } else {
         QFile::remove(m_trimTemporaryFile);

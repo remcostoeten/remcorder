@@ -1226,6 +1226,26 @@ ApplicationWindow {
                                 Accessible.name: "Include pointer in recording"
                             }
                         }
+
+                        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.strokeSoft }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+
+                            Text {
+                                text: "Sound cues"
+                                color: root.ink
+                                font.family: root.sans
+                                font.pixelSize: 13
+                                font.weight: Font.Medium
+                            }
+                            Item { Layout.fillWidth: true }
+                            ModernSwitch {
+                                checked: backend.soundCuesEnabled
+                                onToggled: backend.soundCuesEnabled = checked
+                                Accessible.name: "Play a sound when recording starts and stops"
+                            }
+                        }
                     }
                 }
             }
@@ -1698,6 +1718,12 @@ ApplicationWindow {
                                 implicitWidth: 64
                                 implicitHeight: 34
                                 onClicked: backend.openLastRecording()
+                            }
+                            GhostButton {
+                                text: "Copy path"
+                                implicitWidth: 84
+                                implicitHeight: 34
+                                onClicked: backend.copyLastOutputPath()
                             }
                             GhostButton {
                                 text: "Trim"

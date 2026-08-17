@@ -104,7 +104,15 @@ remcorderctl toggle-pause
 remcorderctl stop
 remcorderctl toggle
 remcorderctl --json status
+remcorderctl start --delay 3s
+remcorderctl stop --open              # open the recording when it stops
+remcorderctl stop --open-dir          # open the recording's folder when it stops
 ```
+
+`--delay` only applies to `start` and waits before sending the command, so you
+can switch windows before capture begins. `--open`/`--open-dir` only fire on
+`stop`/`toggle` calls that actually end a recording, and use `xdg-open` to
+launch the file or folder in your default application.
 
 Bind `remcorderctl toggle` to a compositor shortcut. For example, in Hyprland:
 
@@ -171,7 +179,7 @@ systemd/        user units
 ## Git
 
 The repository is private: <https://github.com/remcostoeten/remcorder>, default
-branch `main`, cloned over HTTPS with the `gh` credential helper.
+branch `daddy`, cloned over HTTPS with the `gh` credential helper.
 
 ```sh
 gh repo clone remcostoeten/remcorder     # or: git clone https://github.com/remcostoeten/remcorder.git
@@ -186,7 +194,7 @@ To use SSH instead:
 git remote set-url origin git@github.com:remcostoeten/remcorder.git
 ```
 
-Work on a branch, never straight on `main`:
+Work on a branch, never straight on `daddy`:
 
 ```sh
 git switch -c feat/mic-meter
@@ -213,13 +221,13 @@ Common operations:
 
 ```sh
 git status -sb                   # short status with upstream tracking
-git switch main && git pull --ff-only
-git rebase main                  # keep a feature branch current
+git switch daddy && git pull --ff-only
+git rebase daddy                 # keep a feature branch current
 git commit --amend --no-edit     # fold a fixup into the tip commit
 git restore --staged path        # unstage without losing the edit
 git restore path                 # discard an unwanted local edit
 git log --oneline --graph -20
-git diff main...HEAD             # exactly what a PR would contain
+git diff daddy...HEAD            # exactly what a PR would contain
 ```
 
 Before pushing, `make check` must pass: it runs `go test ./...`, `go vet ./...`,

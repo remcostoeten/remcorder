@@ -49,6 +49,8 @@ class RecorderBackend final : public QObject
     Q_PROPERTY(bool captureCursor READ captureCursor WRITE setCaptureCursor NOTIFY settingsChanged)
     Q_PROPERTY(bool motionBlurEnabled READ motionBlurEnabled WRITE setMotionBlurEnabled NOTIFY settingsChanged)
     Q_PROPERTY(QString motionBlurStrength READ motionBlurStrength WRITE setMotionBlurStrength NOTIFY settingsChanged)
+    Q_PROPERTY(bool soundCuesEnabled READ soundCuesEnabled WRITE setSoundCuesEnabled NOTIFY settingsChanged)
+    Q_PROPERTY(QVariantList recentRecordings READ recentRecordings NOTIFY recentRecordingsChanged)
 
     Q_PROPERTY(bool micMonitorEnabled READ micMonitorEnabled WRITE setMicMonitorEnabled NOTIFY micMonitorChanged)
     Q_PROPERTY(bool micMonitorActive READ micMonitorActive NOTIFY micMonitorChanged)
@@ -93,6 +95,8 @@ public:
     bool captureCursor() const { return m_captureCursor; }
     bool motionBlurEnabled() const { return m_motionBlurEnabled; }
     QString motionBlurStrength() const { return m_motionBlurStrength; }
+    bool soundCuesEnabled() const { return m_soundCuesEnabled; }
+    QVariantList recentRecordings() const { return m_recentRecordings; }
 
     bool micMonitorEnabled() const { return m_micMonitorEnabled; }
     bool micMonitorActive() const { return m_micSource != nullptr; }
@@ -113,6 +117,7 @@ public:
     void setCaptureCursor(bool value);
     void setMotionBlurEnabled(bool value);
     void setMotionBlurStrength(const QString &value);
+    void setSoundCuesEnabled(bool value);
     void setMicMonitorEnabled(bool value);
     void setMicPlaybackEnabled(bool value);
     void setMicGain(qreal value);
@@ -131,6 +136,8 @@ public:
     Q_INVOKABLE void exportTrim(const QString &source, double startSeconds, double endSeconds);
     Q_INVOKABLE void openLastTrimmedRecording();
     Q_INVOKABLE QString formatDuration(qint64 seconds) const;
+    Q_INVOKABLE void copyLastOutputPath();
+    Q_INVOKABLE void openRecentRecording(const QString &path);
 
 signals:
     void stateChanged();
@@ -143,6 +150,7 @@ signals:
     void micMonitorChanged();
     void micLevelChanged();
     void micGainChanged();
+    void recentRecordingsChanged();
     void requestShow();
 
 private:
@@ -157,6 +165,11 @@ private:
     void saveSetting(const QString &key, const QVariant &value);
     void setupTray();
     void updateTray();
+    void updateRecentMenu();
+    void notifyTray(const QString &title, const QString &path);
+    void rememberRecentRecording(const QString &path);
+    void playStartCue();
+    void playStopCue();
     void startMotionBlur(const QString &source, qint64 durationSeconds);
     void updateBlurProgress();
     void finishMotionBlur(int exitCode, QProcess::ExitStatus status);
@@ -215,6 +228,9 @@ private:
     bool m_motionBlurEnabled = false;
     QString m_motionBlurStrength = QStringLiteral("smooth");
     QString m_activeCodec = QStringLiteral("h264");
+    bool m_soundCuesEnabled = true;
+    QVariantList m_recentRecordings;
+    QString m_lastNotificationPath;
 
     bool m_requestInFlight = false;
 
@@ -242,6 +258,8 @@ private:
     QAction *m_openAction = nullptr;
     QAction *m_openBlurAction = nullptr;
     QAction *m_openTrimAction = nullptr;
+    QAction *m_copyPathAction = nullptr;
+    QMenu *m_recentMenu = nullptr;
     QAction *m_quitAction = nullptr;
     QProcess *m_blurProcess = nullptr;
     QProcess *m_trimProcess = nullptr;

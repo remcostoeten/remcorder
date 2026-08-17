@@ -6,10 +6,12 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/remcostoeten/recorder/internal/control"
+	"github.com/remcostoeten/remcorder/internal/control"
 )
 
 func main() {
@@ -21,6 +23,9 @@ func main() {
 	socketPath := flag.String("socket", defaultSocket, "path to the daemon Unix socket")
 	asJSON := flag.Bool("json", false, "print the complete response as JSON")
 	timeout := flag.Duration("timeout", 15*time.Second, "maximum time to wait for the daemon")
+	delay := flag.Duration("delay", 0, "wait this long before sending a start command")
+	openFile := flag.Bool("open", false, "open the recording with the default application once it stops")
+	openDir := flag.Bool("open-dir", false, "open the recording's folder once it stops")
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [options] <status|start|stop|toggle|pause|resume|toggle-pause>\n\n", os.Args[0])
 		flag.PrintDefaults()
@@ -39,10 +44,15 @@ func main() {
 		exitError(fmt.Errorf("unknown command %q (expected status, start, stop, toggle, pause, resume, or toggle-pause)", action))
 	}
 
+	if action == control.ActionStart && *delay > 0 {
+		fmt.Printf("starting in %s…\n", delay.Round(time.Second))
+		time.Sleep(*delay)
+	}
+
 	response, err := control.Call(*socketPath, control.Request{Action: action}, *timeout)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			exitError(fmt.Errorf("recorder daemon is not running (socket %s is missing)", *socketPath))
+			exitError(fmt.Errorf("remcorder daemon is not running (socket %s is missing)", *socketPath))
 		}
 		exitError(err)
 	}
@@ -57,8 +67,24 @@ func main() {
 		printHuman(response)
 	}
 
+	if (action == control.ActionStop || action == control.ActionToggle) &&
+		response.OK && !response.State.Recording && response.State.LastOutputFile != "" {
+		if *openFile {
+			openPath(response.State.LastOutputFile)
+		}
+		if *openDir {
+			openPath(filepath.Dir(response.State.LastOutputFile))
+		}
+	}
+
 	if !response.OK {
 		os.Exit(1)
+	}
+}
+
+func openPath(path string) {
+	if err := exec.Command("xdg-open", path).Start(); err != nil {
+		fmt.Fprintln(os.Stderr, "remcorderctl: could not open", path+":", err)
 	}
 }
 
@@ -98,6 +124,6 @@ func formatDuration(seconds int64) string {
 }
 
 func exitError(err error) {
-	fmt.Fprintln(os.Stderr, "recorderctl:", err)
+	fmt.Fprintln(os.Stderr, "remcorderctl:", err)
 	os.Exit(1)
 }
