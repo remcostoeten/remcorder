@@ -29,9 +29,6 @@ class RecorderBackend final : public QObject
     Q_PROPERTY(QString outputFile READ outputFile NOTIFY stateChanged)
     Q_PROPERTY(QString lastOutputFile READ lastOutputFile NOTIFY stateChanged)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorChanged)
-    Q_PROPERTY(bool processingBlur READ processingBlur NOTIFY blurStateChanged)
-    Q_PROPERTY(int blurProgress READ blurProgress NOTIFY blurStateChanged)
-    Q_PROPERTY(QString lastBlurredOutputFile READ lastBlurredOutputFile NOTIFY blurStateChanged)
     Q_PROPERTY(bool processingTrim READ processingTrim NOTIFY trimStateChanged)
     Q_PROPERTY(int trimProgress READ trimProgress NOTIFY trimStateChanged)
     Q_PROPERTY(QString lastTrimmedOutputFile READ lastTrimmedOutputFile NOTIFY trimStateChanged)
@@ -47,8 +44,6 @@ class RecorderBackend final : public QObject
     Q_PROPERTY(QString qualityPreset READ qualityPreset WRITE setQualityPreset NOTIFY settingsChanged)
     Q_PROPERTY(QString outputDirectory READ outputDirectory WRITE setOutputDirectory NOTIFY settingsChanged)
     Q_PROPERTY(bool captureCursor READ captureCursor WRITE setCaptureCursor NOTIFY settingsChanged)
-    Q_PROPERTY(bool motionBlurEnabled READ motionBlurEnabled WRITE setMotionBlurEnabled NOTIFY settingsChanged)
-    Q_PROPERTY(QString motionBlurStrength READ motionBlurStrength WRITE setMotionBlurStrength NOTIFY settingsChanged)
     Q_PROPERTY(bool soundCuesEnabled READ soundCuesEnabled WRITE setSoundCuesEnabled NOTIFY settingsChanged)
     Q_PROPERTY(QVariantList recentRecordings READ recentRecordings NOTIFY recentRecordingsChanged)
 
@@ -75,9 +70,6 @@ public:
     QString outputFile() const { return m_outputFile; }
     QString lastOutputFile() const { return m_lastOutputFile; }
     QString errorMessage() const { return m_errorMessage; }
-    bool processingBlur() const { return m_processingBlur; }
-    int blurProgress() const { return m_blurProgress; }
-    QString lastBlurredOutputFile() const { return m_lastBlurredOutputFile; }
     bool processingTrim() const { return m_processingTrim; }
     int trimProgress() const { return m_trimProgress; }
     QString lastTrimmedOutputFile() const { return m_lastTrimmedOutputFile; }
@@ -93,8 +85,6 @@ public:
     QString qualityPreset() const { return m_qualityPreset; }
     QString outputDirectory() const { return m_outputDirectory; }
     bool captureCursor() const { return m_captureCursor; }
-    bool motionBlurEnabled() const { return m_motionBlurEnabled; }
-    QString motionBlurStrength() const { return m_motionBlurStrength; }
     bool soundCuesEnabled() const { return m_soundCuesEnabled; }
     QVariantList recentRecordings() const { return m_recentRecordings; }
 
@@ -115,8 +105,6 @@ public:
     void setQualityPreset(const QString &value);
     void setOutputDirectory(const QString &value);
     void setCaptureCursor(bool value);
-    void setMotionBlurEnabled(bool value);
-    void setMotionBlurStrength(const QString &value);
     void setSoundCuesEnabled(bool value);
     void setMicMonitorEnabled(bool value);
     void setMicPlaybackEnabled(bool value);
@@ -131,9 +119,12 @@ public:
     Q_INVOKABLE void chooseOutputDirectory();
     Q_INVOKABLE void openOutputDirectory();
     Q_INVOKABLE void openLastRecording();
-    Q_INVOKABLE void openLastBlurredRecording();
     Q_INVOKABLE QString chooseVideoToTrim();
-    Q_INVOKABLE void exportTrim(const QString &source, double startSeconds, double endSeconds);
+    Q_INVOKABLE void exportTrim(const QString &source,
+                                double startSeconds,
+                                double endSeconds,
+                                bool motionBlur,
+                                const QString &motionBlurStrength);
     Q_INVOKABLE void openLastTrimmedRecording();
     Q_INVOKABLE QString formatDuration(qint64 seconds) const;
     Q_INVOKABLE void copyLastOutputPath();
@@ -145,7 +136,6 @@ signals:
     void devicesChanged();
     void settingsChanged();
     void errorChanged();
-    void blurStateChanged();
     void trimStateChanged();
     void micMonitorChanged();
     void micLevelChanged();
@@ -170,14 +160,9 @@ private:
     void rememberRecentRecording(const QString &path);
     void playStartCue();
     void playStopCue();
-    void startMotionBlur(const QString &source, qint64 durationSeconds);
-    void updateBlurProgress();
-    void finishMotionBlur(int exitCode, QProcess::ExitStatus status);
-    QString motionBlurOutputPath(const QString &source) const;
-    int motionBlurFrames() const;
     void updateTrimProgress();
     void finishTrim(int exitCode, QProcess::ExitStatus status);
-    QString trimOutputPath(const QString &source) const;
+    QString trimOutputPath(const QString &source, bool motionBlur) const;
     QStringList videoEncoderOptions(QString *encoder) const;
     QString socketPath() const;
     QVariantList discover(const QString &argument, bool inputs) const;
@@ -199,13 +184,6 @@ private:
     QString m_errorMessage;
     QString m_initialTrimPath;
     bool m_startHidden = false;
-    bool m_processingBlur = false;
-    int m_blurProgress = 0;
-    QString m_lastBlurredOutputFile;
-    QString m_blurOutputFile;
-    QString m_blurTemporaryFile;
-    qint64 m_blurDurationSeconds = 0;
-    QByteArray m_blurProgressBuffer;
     bool m_processingTrim = false;
     int m_trimProgress = 0;
     QString m_lastTrimmedOutputFile;
@@ -225,8 +203,6 @@ private:
     QString m_qualityPreset = QStringLiteral("balanced");
     QString m_outputDirectory;
     bool m_captureCursor = true;
-    bool m_motionBlurEnabled = false;
-    QString m_motionBlurStrength = QStringLiteral("smooth");
     QString m_activeCodec = QStringLiteral("h264");
     bool m_soundCuesEnabled = true;
     QVariantList m_recentRecordings;
@@ -256,11 +232,9 @@ private:
     QAction *m_pauseAction = nullptr;
     QAction *m_stopAction = nullptr;
     QAction *m_openAction = nullptr;
-    QAction *m_openBlurAction = nullptr;
     QAction *m_openTrimAction = nullptr;
     QAction *m_copyPathAction = nullptr;
     QMenu *m_recentMenu = nullptr;
     QAction *m_quitAction = nullptr;
-    QProcess *m_blurProcess = nullptr;
     QProcess *m_trimProcess = nullptr;
 };

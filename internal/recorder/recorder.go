@@ -8,12 +8,17 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 )
+
+const CaptureRegion = "region"
+
+var regionPattern = regexp.MustCompile(`^\d+x\d+\+-?\d+\+-?\d+$`)
 
 var (
 	ErrAlreadyRecording = errors.New("a recording is already active")
@@ -25,6 +30,7 @@ var (
 type Config struct {
 	OutputDirectory string
 	Capture         string
+	Region          string
 	FPS             int
 	Audio           string
 	Codec           string
@@ -35,6 +41,7 @@ type Config struct {
 type StartOptions struct {
 	OutputDirectory string  `json:"output_directory,omitempty"`
 	Capture         string  `json:"capture,omitempty"`
+	Region          string  `json:"region,omitempty"`
 	FPS             int     `json:"fps,omitempty"`
 	Audio           *string `json:"audio,omitempty"`
 	Codec           string  `json:"codec,omitempty"`
@@ -117,6 +124,9 @@ func (r *Recorder) StartWithOptions(options StartOptions) (State, error) {
 		"-q", config.Quality,
 		"-cursor", yesNo(config.Cursor),
 	}
+	if config.Capture == CaptureRegion {
+		args = append(args, "-region", strings.TrimSpace(config.Region))
+	}
 	if strings.TrimSpace(config.Audio) != "" {
 		args = append(args, "-a", config.Audio)
 	}
@@ -169,6 +179,15 @@ func validateConfig(config Config) error {
 	if strings.TrimSpace(config.Quality) == "" {
 		return errors.New("quality must not be empty")
 	}
+	if config.Capture == CaptureRegion {
+		region := strings.TrimSpace(config.Region)
+		if region == "" {
+			return errors.New("region capture needs a region; drag one first")
+		}
+		if !regionPattern.MatchString(region) {
+			return fmt.Errorf("region must look like WxH+X+Y, got %q", region)
+		}
+	}
 	return nil
 }
 
@@ -178,6 +197,9 @@ func applyOptions(config Config, options StartOptions) Config {
 	}
 	if options.Capture != "" {
 		config.Capture = options.Capture
+	}
+	if options.Region != "" {
+		config.Region = options.Region
 	}
 	if options.FPS != 0 {
 		config.FPS = options.FPS

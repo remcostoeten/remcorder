@@ -1,5 +1,5 @@
 [Unit]
-Description=Remcorder GPU-accelerated Wayland screen recorder
+Description=Remcorder GPU-accelerated screen recorder
 Documentation=https://github.com/remcostoeten/remcorder
 After=graphical-session.target
 PartOf=graphical-session.target

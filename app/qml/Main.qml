@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Window
 import QtMultimedia
 
 ApplicationWindow {
@@ -23,14 +24,14 @@ ApplicationWindow {
     readonly property color teal: "#4FD1C5"
     readonly property color focusBlue: "#7C93FF"
 
-    readonly property bool busy: backend.processingBlur || backend.processingTrim
+    readonly property bool busy: backend.processingTrim
     readonly property color accent: backend.processingTrim
         ? teal
-        : backend.processingBlur
-        ? focusBlue
         : backend.recording
         ? (backend.paused ? amber : signal)
         : "#5C6779"
+
+    readonly property bool maximized: visibility === Window.Maximized || visibility === Window.FullScreen
 
     width: 620
     height: 840
@@ -39,10 +40,23 @@ ApplicationWindow {
     visible: !backend.startHidden
     title: "Remcorder"
     color: canvas
+    flags: Qt.Window | Qt.FramelessWindowHint
+
+    function toggleMaximized() {
+        if (root.maximized)
+            root.showNormal()
+        else
+            root.showMaximized()
+    }
 
     Component.onCompleted: {
         if (backend.initialTrimPath.length > 0)
             Qt.callLater(() => trimDialog.openForSource(backend.initialTrimPath))
+    }
+
+    onActiveChanged: {
+        if (active)
+            backend.refreshDevices()
     }
 
     onClosing: close => {
@@ -142,6 +156,50 @@ ApplicationWindow {
         Behavior on scale { NumberAnimation { duration: 90; easing.type: Easing.OutCubic } }
 
         HoverHandler { cursorShape: Qt.PointingHandCursor }
+    }
+
+    component WindowButton: Button {
+        id: chromeButton
+
+        property color hoverFill: root.surfaceHi
+        property color hoverInk: root.ink
+
+        implicitWidth: 30
+        implicitHeight: 30
+        hoverEnabled: true
+        focusPolicy: Qt.NoFocus
+        font.family: root.sans
+        font.pixelSize: 12
+
+        contentItem: Text {
+            text: chromeButton.text
+            color: chromeButton.hovered ? chromeButton.hoverInk : root.inkFaint
+            font: chromeButton.font
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+
+            Behavior on color { ColorAnimation { duration: 120 } }
+        }
+
+        background: Rectangle {
+            radius: 9
+            color: chromeButton.down
+                ? Qt.darker(chromeButton.hoverFill, 1.2)
+                : chromeButton.hovered ? chromeButton.hoverFill : "transparent"
+
+            Behavior on color { ColorAnimation { duration: 120 } }
+        }
+
+        HoverHandler { cursorShape: Qt.PointingHandCursor }
+    }
+
+    component ResizeGrip: MouseArea {
+        property int edges: 0
+
+        acceptedButtons: Qt.LeftButton
+        enabled: !root.maximized
+        visible: enabled
+        onPressed: windowChrome.startResize(root, edges)
     }
 
     component PrimaryButton: Button {
@@ -528,10 +586,13 @@ ApplicationWindow {
 
         property string sourcePath: ""
         property bool rangeInitialized: false
+        property bool motionBlur: false
+        property string motionBlurStrength: "smooth"
 
         function openForSource(path) {
             sourcePath = path
             rangeInitialized = false
+            motionBlur = false
             open()
             trimPlayer.source = "file://" + encodeURI(path)
             trimPlayer.play()
@@ -541,7 +602,7 @@ ApplicationWindow {
         x: Math.round((root.width - width) / 2)
         y: Math.round((root.height - height) / 2)
         width: Math.min(root.width - 48, 560)
-        height: Math.min(root.height - 60, 640)
+        height: Math.min(root.height - 60, 700)
         modal: true
         padding: 22
         closePolicy: Popup.CloseOnEscape
@@ -615,7 +676,9 @@ ApplicationWindow {
 
             Rectangle {
                 Layout.fillWidth: true
+                Layout.fillHeight: true
                 Layout.preferredHeight: Math.min(270, width * 9 / 16)
+                Layout.minimumHeight: 132
                 radius: 14
                 color: "#06070B"
                 border.width: 1
@@ -782,6 +845,89 @@ ApplicationWindow {
                 elide: Text.ElideMiddle
             }
 
+            Card {
+                Layout.fillWidth: true
+                implicitHeight: blurColumn.implicitHeight + 24
+                border.color: trimDialog.motionBlur ? "#2F3E63" : root.stroke
+
+                Behavior on border.color { ColorAnimation { duration: 180 } }
+
+                ColumnLayout {
+                    id: blurColumn
+                    anchors.fill: parent
+                    anchors.margins: 12
+                    spacing: 10
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 12
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 2
+
+                            RowLayout {
+                                spacing: 8
+
+                                Text {
+                                    text: "Motion blur"
+                                    color: root.ink
+                                    font.family: root.sans
+                                    font.pixelSize: 13
+                                    font.weight: Font.Medium
+                                }
+                                Rectangle {
+                                    Layout.preferredHeight: 18
+                                    Layout.preferredWidth: betaLabel.implicitWidth + 14
+                                    radius: 9
+                                    color: "#1B2438"
+                                    border.width: 1
+                                    border.color: "#2F3E63"
+
+                                    Text {
+                                        id: betaLabel
+                                        anchors.centerIn: parent
+                                        text: "BETA"
+                                        color: root.focusBlue
+                                        font.family: root.sans
+                                        font.pixelSize: 9
+                                        font.weight: Font.DemiBold
+                                        font.letterSpacing: 1
+                                    }
+                                }
+                            }
+                            Text {
+                                Layout.fillWidth: true
+                                text: "Blend frames together as the copy is exported."
+                                color: root.inkDim
+                                font.family: root.sans
+                                font.pixelSize: 12
+                                wrapMode: Text.WordWrap
+                            }
+                        }
+
+                        ModernSwitch {
+                            checked: trimDialog.motionBlur
+                            onToggled: trimDialog.motionBlur = checked
+                            Accessible.name: "Apply motion blur to the exported copy"
+                        }
+                    }
+
+                    Segmented {
+                        visible: trimDialog.motionBlur
+                        Layout.fillWidth: true
+                        implicitHeight: 40
+                        options: [
+                            { value: "subtle", label: "Subtle" },
+                            { value: "smooth", label: "Smooth" },
+                            { value: "strong", label: "Strong" }
+                        ]
+                        current: trimDialog.motionBlurStrength
+                        onPicked: value => trimDialog.motionBlurStrength = value
+                    }
+                }
+            }
+
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 10
@@ -798,13 +944,15 @@ ApplicationWindow {
                     tint: root.focusBlue
                     enabled: trimDialog.rangeInitialized
                         && trimRange.second.value - trimRange.first.value >= 0.25
-                    text: "Export trimmed copy"
+                    text: trimDialog.motionBlur ? "Export blurred copy" : "Export trimmed copy"
                     onClicked: {
                         trimPlayer.pause()
                         backend.exportTrim(
                             trimDialog.sourcePath,
                             trimRange.first.value,
-                            trimRange.second.value)
+                            trimRange.second.value,
+                            trimDialog.motionBlur,
+                            trimDialog.motionBlurStrength)
                         trimDialog.close()
                     }
                 }
@@ -816,35 +964,34 @@ ApplicationWindow {
         height: 76
         color: root.canvas
 
+        DragHandler {
+            target: null
+            onActiveChanged: {
+                if (active)
+                    windowChrome.startMove(root)
+            }
+        }
+
+        TapHandler {
+            gesturePolicy: TapHandler.DragThreshold
+            onDoubleTapped: root.toggleMaximized()
+        }
+
         RowLayout {
             anchors.fill: parent
             anchors.leftMargin: 26
-            anchors.rightMargin: 22
+            anchors.rightMargin: 14
             spacing: 12
 
-            Rectangle {
-                Layout.preferredWidth: 34
-                Layout.preferredHeight: 34
-                radius: 12
-                color: root.surfaceHi
-                border.width: 1
-                border.color: root.stroke
-
-                Rectangle {
-                    anchors.centerIn: parent
-                    width: 10
-                    height: 10
-                    radius: 5
-                    color: root.signal
-                    opacity: backend.recording && !backend.paused ? 1 : 0.75
-
-                    SequentialAnimation on opacity {
-                        running: backend.recording && !backend.paused
-                        loops: Animation.Infinite
-                        NumberAnimation { from: 1; to: 0.35; duration: 750; easing.type: Easing.InOutQuad }
-                        NumberAnimation { from: 0.35; to: 1; duration: 750; easing.type: Easing.InOutQuad }
-                    }
-                }
+            Image {
+                Layout.preferredWidth: 38
+                Layout.preferredHeight: 38
+                source: "qrc:/branding/remcorder-128.png"
+                sourceSize.width: 128
+                sourceSize.height: 128
+                fillMode: Image.PreserveAspectFit
+                smooth: true
+                mipmap: true
             }
 
             ColumnLayout {
@@ -859,7 +1006,7 @@ ApplicationWindow {
                     font.letterSpacing: -0.2
                 }
                 Text {
-                    text: backend.serviceAvailable ? "Wayland capture ready" : "Connecting to recorder…"
+                    text: backend.serviceAvailable ? "Capture ready" : "Connecting to recorder…"
                     color: backend.serviceAvailable ? root.inkDim : root.amber
                     font.family: root.sans
                     font.pixelSize: 11
@@ -869,40 +1016,32 @@ ApplicationWindow {
             Item { Layout.fillWidth: true }
 
             Rectangle {
-                Layout.preferredHeight: 26
-                Layout.preferredWidth: statusPill.implicitWidth + 22
-                radius: 13
-                color: backend.serviceAvailable ? "#14202A" : "#2A2116"
-                border.width: 1
-                border.color: backend.serviceAvailable ? "#1F3A44" : "#4A3A22"
-
-                RowLayout {
-                    id: statusPill
-                    anchors.centerIn: parent
-                    spacing: 7
-
-                    Rectangle {
-                        Layout.preferredWidth: 6
-                        Layout.preferredHeight: 6
-                        radius: 3
-                        color: backend.serviceAvailable ? root.teal : root.amber
-                    }
-                    Text {
-                        text: backend.serviceAvailable ? "Service online" : "Offline"
-                        color: backend.serviceAvailable ? root.teal : root.amber
-                        font.family: root.sans
-                        font.pixelSize: 11
-                        font.weight: Font.DemiBold
-                    }
-                }
+                Layout.preferredWidth: 1
+                Layout.preferredHeight: 20
+                Layout.leftMargin: 6
+                Layout.rightMargin: 2
+                color: root.strokeSoft
             }
 
-            GhostButton {
-                text: "↻"
-                implicitWidth: 40
-                font.pixelSize: 15
-                Accessible.name: "Refresh displays and audio devices"
-                onClicked: backend.refreshDevices()
+            WindowButton {
+                text: "─"
+                Accessible.name: "Minimize"
+                onClicked: root.showMinimized()
+            }
+
+            WindowButton {
+                text: root.maximized ? "❐" : "□"
+                font.pixelSize: root.maximized ? 12 : 14
+                Accessible.name: root.maximized ? "Restore" : "Maximize"
+                onClicked: root.toggleMaximized()
+            }
+
+            WindowButton {
+                text: "✕"
+                hoverFill: root.signal
+                hoverInk: "#FFFFFF"
+                Accessible.name: backend.trayAvailable ? "Hide to tray" : "Close"
+                onClicked: root.close()
             }
         }
 
@@ -938,10 +1077,87 @@ ApplicationWindow {
             tint: root.busy ? root.focusBlue : root.signal
             text: backend.processingTrim
                 ? "Exporting trim…  " + backend.trimProgress + "%"
-                : backend.processingBlur
-                ? "Creating blurred copy…  " + backend.blurProgress + "%"
                 : "●   Start recording"
             onClicked: backend.startRecording()
+        }
+    }
+
+    Item {
+        id: windowFrame
+
+        readonly property int thickness: 6
+        readonly property int corner: 14
+
+        parent: Overlay.overlay
+        anchors.fill: parent
+        z: 1000
+
+        Rectangle {
+            anchors.fill: parent
+            color: "transparent"
+            border.width: 1
+            border.color: root.stroke
+            visible: !root.maximized
+        }
+
+        ResizeGrip {
+            edges: Qt.TopEdge
+            cursorShape: Qt.SizeVerCursor
+            height: parent.thickness
+            anchors { top: parent.top; left: parent.left; right: parent.right; leftMargin: parent.corner; rightMargin: parent.corner }
+        }
+
+        ResizeGrip {
+            edges: Qt.BottomEdge
+            cursorShape: Qt.SizeVerCursor
+            height: parent.thickness
+            anchors { bottom: parent.bottom; left: parent.left; right: parent.right; leftMargin: parent.corner; rightMargin: parent.corner }
+        }
+
+        ResizeGrip {
+            edges: Qt.LeftEdge
+            cursorShape: Qt.SizeHorCursor
+            width: parent.thickness
+            anchors { left: parent.left; top: parent.top; bottom: parent.bottom; topMargin: parent.corner; bottomMargin: parent.corner }
+        }
+
+        ResizeGrip {
+            edges: Qt.RightEdge
+            cursorShape: Qt.SizeHorCursor
+            width: parent.thickness
+            anchors { right: parent.right; top: parent.top; bottom: parent.bottom; topMargin: parent.corner; bottomMargin: parent.corner }
+        }
+
+        ResizeGrip {
+            edges: Qt.TopEdge | Qt.LeftEdge
+            cursorShape: Qt.SizeFDiagCursor
+            width: parent.corner
+            height: parent.corner
+            anchors { top: parent.top; left: parent.left }
+        }
+
+        ResizeGrip {
+            edges: Qt.TopEdge | Qt.RightEdge
+            cursorShape: Qt.SizeBDiagCursor
+            width: parent.corner
+            height: parent.corner
+            anchors { top: parent.top; right: parent.right }
+        }
+
+        ResizeGrip {
+            edges: Qt.BottomEdge | Qt.LeftEdge
+            cursorShape: Qt.SizeBDiagCursor
+            width: parent.corner
+            height: parent.corner
+            anchors { bottom: parent.bottom; left: parent.left }
+        }
+
+        ResizeGrip {
+            edges: Qt.BottomEdge | Qt.RightEdge
+            cursorShape: Qt.SizeFDiagCursor
+            width: parent.corner
+            height: parent.corner
+            anchors { bottom: parent.bottom; right: parent.right }
         }
     }
 
@@ -1032,8 +1248,6 @@ ApplicationWindow {
                             Text {
                                 text: backend.processingTrim
                                     ? "EXPORTING TRIMMED COPY"
-                                    : backend.processingBlur
-                                    ? "CREATING BLURRED COPY"
                                     : backend.paused
                                     ? "RECORDING PAUSED"
                                     : "CAPTURING"
@@ -1083,9 +1297,7 @@ ApplicationWindow {
                         color: "#20262F"
 
                         Rectangle {
-                            width: parent.width
-                                * (backend.processingTrim ? backend.trimProgress : backend.blurProgress)
-                                / 100
+                            width: parent.width * backend.trimProgress / 100
                             height: parent.height
                             radius: 3
                             color: root.accent
@@ -1532,98 +1744,6 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 spacing: 10
 
-                SectionLabel { text: "EXPERIMENTAL" }
-
-                Card {
-                    Layout.fillWidth: true
-                    implicitHeight: blurColumn.implicitHeight + 28
-                    border.color: backend.motionBlurEnabled ? "#2F3E63" : root.stroke
-
-                    Behavior on border.color { ColorAnimation { duration: 180 } }
-
-                    ColumnLayout {
-                        id: blurColumn
-                        anchors.fill: parent
-                        anchors.margins: 14
-                        spacing: 11
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 12
-
-                            ColumnLayout {
-                                Layout.fillWidth: true
-                                spacing: 2
-
-                                RowLayout {
-                                    spacing: 8
-
-                                    Text {
-                                        text: "Motion blur copy"
-                                        color: root.ink
-                                        font.family: root.sans
-                                        font.pixelSize: 13
-                                        font.weight: Font.Medium
-                                    }
-                                    Rectangle {
-                                        Layout.preferredHeight: 18
-                                        Layout.preferredWidth: betaLabel.implicitWidth + 14
-                                        radius: 9
-                                        color: "#1B2438"
-                                        border.width: 1
-                                        border.color: "#2F3E63"
-
-                                        Text {
-                                            id: betaLabel
-                                            anchors.centerIn: parent
-                                            text: "BETA"
-                                            color: root.focusBlue
-                                            font.family: root.sans
-                                            font.pixelSize: 9
-                                            font.weight: Font.DemiBold
-                                            font.letterSpacing: 1
-                                        }
-                                    }
-                                }
-                                Text {
-                                    Layout.fillWidth: true
-                                    text: "Keep the original and create a second blurred MP4."
-                                    color: root.inkDim
-                                    font.family: root.sans
-                                    font.pixelSize: 12
-                                    wrapMode: Text.WordWrap
-                                }
-                            }
-
-                            ModernSwitch {
-                                checked: backend.motionBlurEnabled
-                                onToggled: backend.motionBlurEnabled = checked
-                                Accessible.name: "Create an experimental motion blur copy"
-                            }
-                        }
-
-                        Segmented {
-                            visible: backend.motionBlurEnabled
-                            Layout.fillWidth: true
-                            implicitHeight: 40
-                            options: [
-                                { value: "subtle", label: "Subtle" },
-                                { value: "smooth", label: "Smooth" },
-                                { value: "strong", label: "Strong" }
-                            ]
-                            current: backend.motionBlurStrength
-                            onPicked: value => backend.motionBlurStrength = value
-                        }
-                    }
-                }
-            }
-
-            ColumnLayout {
-                Layout.leftMargin: 26
-                Layout.rightMargin: 26
-                Layout.fillWidth: true
-                spacing: 10
-
                 SectionLabel { text: "SAVE TO" }
 
                 RowLayout {
@@ -1735,63 +1855,8 @@ ApplicationWindow {
                         }
 
                         Rectangle {
-                            visible: backend.lastOutputFile.length > 0
-                                && backend.lastBlurredOutputFile.length > 0
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 1
-                            color: root.strokeSoft
-                        }
-
-                        RowLayout {
-                            visible: backend.lastBlurredOutputFile.length > 0
-                            Layout.fillWidth: true
-                            spacing: 10
-
-                            Rectangle {
-                                Layout.preferredWidth: 8
-                                Layout.preferredHeight: 8
-                                radius: 4
-                                color: root.focusBlue
-                            }
-                            ColumnLayout {
-                                Layout.fillWidth: true
-                                spacing: 0
-
-                                Text {
-                                    text: "Blurred copy"
-                                    color: root.ink
-                                    font.family: root.sans
-                                    font.pixelSize: 13
-                                    font.weight: Font.Medium
-                                }
-                                Text {
-                                    Layout.fillWidth: true
-                                    text: root.baseName(backend.lastBlurredOutputFile)
-                                    color: root.inkDim
-                                    font.family: root.mono
-                                    font.pixelSize: 11
-                                    elide: Text.ElideMiddle
-                                }
-                            }
-                            GhostButton {
-                                text: "Open"
-                                implicitWidth: 64
-                                implicitHeight: 34
-                                onClicked: backend.openLastBlurredRecording()
-                            }
-                            GhostButton {
-                                text: "Trim"
-                                implicitWidth: 60
-                                implicitHeight: 34
-                                enabled: !root.busy
-                                onClicked: trimDialog.openForSource(backend.lastBlurredOutputFile)
-                            }
-                        }
-
-                        Rectangle {
                             visible: backend.lastTrimmedOutputFile.length > 0
-                                && (backend.lastOutputFile.length > 0
-                                    || backend.lastBlurredOutputFile.length > 0)
+                                && backend.lastOutputFile.length > 0
                             Layout.fillWidth: true
                             Layout.preferredHeight: 1
                             color: root.strokeSoft
@@ -1838,7 +1903,6 @@ ApplicationWindow {
 
                         Text {
                             visible: backend.lastOutputFile.length === 0
-                                && backend.lastBlurredOutputFile.length === 0
                                 && backend.lastTrimmedOutputFile.length === 0
                             Layout.fillWidth: true
                             text: "Recordings from this session will appear here."

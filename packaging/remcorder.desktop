@@ -2,7 +2,7 @@
 Type=Application
 Name=Remcorder
 GenericName=Screen Recorder
-Comment=GPU-accelerated screen recording for Wayland
+Comment=GPU-accelerated screen recording
 Exec=remcorder
 Icon=remcorder
 Terminal=false

@@ -38,6 +38,7 @@ func main() {
 		socketPath = flag.String("socket", defaultSocket, "path to the daemon Unix socket")
 		outputDir  = flag.String("output-dir", defaultOutput, "directory in which recordings are saved")
 		capture    = flag.String("capture", "screen", "gpu-screen-recorder capture source (screen, portal, monitor, or region)")
+		region     = flag.String("region", "", "region to capture as WxH+X+Y when -capture is region")
 		fps        = flag.Int("fps", 60, "maximum recording frame rate")
 		audio      = flag.String("audio", "default_output", "audio source; empty disables audio")
 		codec      = flag.String("codec", "h264", "video codec")
@@ -54,6 +55,7 @@ func main() {
 	engine, err := recorder.New(recorder.Config{
 		OutputDirectory: *outputDir,
 		Capture:         *capture,
+		Region:          *region,
 		FPS:             *fps,
 		Audio:           *audio,
 		Codec:           *codec,

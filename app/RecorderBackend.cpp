@@ -1,5 +1,7 @@
 #include "RecorderBackend.h"
 
+#include "Branding.h"
+
 #include <QAction>
 #include <QApplication>
 #include <QAudioDevice>
@@ -13,14 +15,12 @@
 #include <QFileInfo>
 #include <QFileDialog>
 #include <QGuiApplication>
-#include <QIcon>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLocalSocket>
 #include <QMediaDevices>
 #include <QMenu>
-#include <QPainter>
 #include <QProcess>
 #include <QRegularExpression>
 #include <QScopeGuard>
@@ -37,19 +37,20 @@ namespace {
 constexpr auto organization = "RemcoStoeten";
 constexpr auto application = "Remcorder";
 
-QIcon recorderIcon()
+QString motionBlurFilter(const QString &strength)
 {
-    QPixmap pixmap(64, 64);
-    pixmap.fill(Qt::transparent);
-    QPainter painter(&pixmap);
-    painter.setRenderHint(QPainter::Antialiasing);
-    painter.setPen(QPen(QColor("#FF6575"), 4));
-    painter.setBrush(QColor("#FF4054"));
-    painter.drawEllipse(QRectF(9, 9, 46, 46));
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(QColor("#151923"));
-    painter.drawEllipse(QRectF(22, 22, 20, 20));
-    return QIcon(pixmap);
+    int frames = 3;
+    if (strength == QStringLiteral("subtle"))
+        frames = 2;
+    else if (strength == QStringLiteral("strong"))
+        frames = 5;
+
+    QStringList weights;
+    for (int index = 1; index <= frames; ++index)
+        weights.append(QString::number(index));
+    return QStringLiteral("tmix=frames=%1:weights=%2")
+        .arg(frames)
+        .arg(weights.join(QLatin1Char(' ')));
 }
 
 QString firstValue(const QVariantList &items, const QString &fallback)
@@ -93,15 +94,6 @@ RecorderBackend::RecorderBackend(QObject *parent)
 RecorderBackend::~RecorderBackend()
 {
     stopMicMonitor();
-    if (m_blurProcess && m_blurProcess->state() != QProcess::NotRunning) {
-        m_blurProcess->terminate();
-        if (!m_blurProcess->waitForFinished(1500)) {
-            m_blurProcess->kill();
-            m_blurProcess->waitForFinished(500);
-        }
-    }
-    if (!m_blurTemporaryFile.isEmpty())
-        QFile::remove(m_blurTemporaryFile);
     if (m_trimProcess && m_trimProcess->state() != QProcess::NotRunning) {
         m_trimProcess->terminate();
         if (!m_trimProcess->waitForFinished(1500)) {
@@ -197,28 +189,6 @@ void RecorderBackend::setCaptureCursor(bool value)
     emit settingsChanged();
 }
 
-void RecorderBackend::setMotionBlurEnabled(bool value)
-{
-    if (value == m_motionBlurEnabled)
-        return;
-    m_motionBlurEnabled = value;
-    saveSetting(QStringLiteral("motionBlurEnabled"), value);
-    emit settingsChanged();
-}
-
-void RecorderBackend::setMotionBlurStrength(const QString &value)
-{
-    if ((value != QStringLiteral("subtle")
-         && value != QStringLiteral("smooth")
-         && value != QStringLiteral("strong"))
-        || value == m_motionBlurStrength) {
-        return;
-    }
-    m_motionBlurStrength = value;
-    saveSetting(QStringLiteral("motionBlurStrength"), value);
-    emit settingsChanged();
-}
-
 void RecorderBackend::setSoundCuesEnabled(bool value)
 {
     if (value == m_soundCuesEnabled)
@@ -230,7 +200,7 @@ void RecorderBackend::setSoundCuesEnabled(bool value)
 
 void RecorderBackend::startRecording()
 {
-    if (m_processingBlur || m_processingTrim) {
+    if (m_processingTrim) {
         setError(QStringLiteral("Wait for post-processing to finish before starting another recording."));
         return;
     }
@@ -351,12 +321,6 @@ void RecorderBackend::openLastRecording()
         QDesktopServices::openUrl(QUrl::fromLocalFile(m_lastOutputFile));
 }
 
-void RecorderBackend::openLastBlurredRecording()
-{
-    if (!m_lastBlurredOutputFile.isEmpty())
-        QDesktopServices::openUrl(QUrl::fromLocalFile(m_lastBlurredOutputFile));
-}
-
 QString RecorderBackend::chooseVideoToTrim()
 {
     return QFileDialog::getOpenFileName(
@@ -366,9 +330,13 @@ QString RecorderBackend::chooseVideoToTrim()
         QStringLiteral("Video files (*.mp4 *.mkv *.webm *.mov);;All files (*)"));
 }
 
-void RecorderBackend::exportTrim(const QString &source, double startSeconds, double endSeconds)
+void RecorderBackend::exportTrim(const QString &source,
+                                 double startSeconds,
+                                 double endSeconds,
+                                 bool motionBlur,
+                                 const QString &motionBlurStrength)
 {
-    if (m_recording || m_processingBlur || m_processingTrim) {
+    if (m_recording || m_processingTrim) {
         setError(QStringLiteral("Wait for the current recording or post-processing task to finish."));
         return;
     }
@@ -387,7 +355,7 @@ void RecorderBackend::exportTrim(const QString &source, double startSeconds, dou
         return;
     }
 
-    m_trimOutputFile = trimOutputPath(source);
+    m_trimOutputFile = trimOutputPath(source, motionBlur);
     const QFileInfo outputInfo(m_trimOutputFile);
     m_trimTemporaryFile = outputInfo.dir().filePath(
         QStringLiteral(".%1.partial.mp4").arg(outputInfo.completeBaseName()));
@@ -404,10 +372,14 @@ void RecorderBackend::exportTrim(const QString &source, double startSeconds, dou
         QStringLiteral("-ss"), QString::number(startSeconds, 'f', 3),
         QStringLiteral("-i"), source,
         QStringLiteral("-t"), QString::number(selectedDuration, 'f', 3),
+    };
+    if (motionBlur)
+        arguments.append({QStringLiteral("-vf"), motionBlurFilter(motionBlurStrength)});
+    arguments.append({
         QStringLiteral("-map"), QStringLiteral("0:v:0"),
         QStringLiteral("-map"), QStringLiteral("0:a?"),
         QStringLiteral("-c:v"), encoder,
-    };
+    });
     arguments.append(encoderOptions);
     arguments.append({
         QStringLiteral("-c:a"), QStringLiteral("aac"),
@@ -537,7 +509,6 @@ void RecorderBackend::applyResponse(const QJsonObject &response)
 {
     const QJsonObject state = response.value(QStringLiteral("state")).toObject();
     const bool wasRecording = m_recording;
-    const qint64 completedDuration = m_durationSeconds;
     const QString previousLast = m_lastOutputFile;
 
     m_recording = state.value(QStringLiteral("recording")).toBool();
@@ -565,8 +536,6 @@ void RecorderBackend::applyResponse(const QJsonObject &response)
         notifyTray(QStringLiteral("Recording saved"), m_lastOutputFile);
         rememberRecentRecording(m_lastOutputFile);
     }
-    if (justFinished && m_motionBlurEnabled)
-        startMotionBlur(m_lastOutputFile, completedDuration);
 }
 
 void RecorderBackend::setError(const QString &message)
@@ -596,18 +565,6 @@ void RecorderBackend::loadSettings()
     m_inputDevice = settings.value(QStringLiteral("inputDevice"), QStringLiteral("default_input")).toString();
     m_qualityPreset = settings.value(QStringLiteral("qualityPreset"), QStringLiteral("balanced")).toString();
     m_captureCursor = settings.value(QStringLiteral("captureCursor"), true).toBool();
-    m_motionBlurEnabled = settings.value(QStringLiteral("motionBlurEnabled"), false).toBool();
-    m_motionBlurStrength = settings.value(
-        QStringLiteral("motionBlurStrength"), QStringLiteral("smooth")).toString();
-    if (m_motionBlurStrength != QStringLiteral("subtle")
-        && m_motionBlurStrength != QStringLiteral("smooth")
-        && m_motionBlurStrength != QStringLiteral("strong")) {
-        m_motionBlurStrength = QStringLiteral("smooth");
-    }
-    m_lastBlurredOutputFile = settings.value(
-        QStringLiteral("lastBlurredOutputFile")).toString();
-    if (!QFileInfo::exists(m_lastBlurredOutputFile))
-        m_lastBlurredOutputFile.clear();
     m_lastTrimmedOutputFile = settings.value(
         QStringLiteral("lastTrimmedOutputFile")).toString();
     if (!QFileInfo::exists(m_lastTrimmedOutputFile))
@@ -637,7 +594,7 @@ void RecorderBackend::setupTray()
     if (!trayAvailable())
         return;
 
-    m_tray = new QSystemTrayIcon(recorderIcon(), this);
+    m_tray = new QSystemTrayIcon(branding::trayIcon(), this);
     m_trayMenu = new QMenu;
     m_showAction = m_trayMenu->addAction(QStringLiteral("Open Remcorder"));
     m_trayMenu->addSeparator();
@@ -646,7 +603,6 @@ void RecorderBackend::setupTray()
     m_stopAction = m_trayMenu->addAction(QStringLiteral("Stop and save"));
     m_trayMenu->addSeparator();
     m_openAction = m_trayMenu->addAction(QStringLiteral("Open recordings folder"));
-    m_openBlurAction = m_trayMenu->addAction(QStringLiteral("Open last blurred copy"));
     m_openTrimAction = m_trayMenu->addAction(QStringLiteral("Open last trimmed copy"));
     m_copyPathAction = m_trayMenu->addAction(QStringLiteral("Copy last recording path"));
     m_recentMenu = m_trayMenu->addMenu(QStringLiteral("Recent recordings"));
@@ -662,8 +618,6 @@ void RecorderBackend::setupTray()
     connect(m_pauseAction, &QAction::triggered, this, &RecorderBackend::togglePause);
     connect(m_stopAction, &QAction::triggered, this, &RecorderBackend::stopRecording);
     connect(m_openAction, &QAction::triggered, this, &RecorderBackend::openOutputDirectory);
-    connect(m_openBlurAction, &QAction::triggered,
-            this, &RecorderBackend::openLastBlurredRecording);
     connect(m_openTrimAction, &QAction::triggered,
             this, &RecorderBackend::openLastTrimmedRecording);
     connect(m_copyPathAction, &QAction::triggered, this, &RecorderBackend::copyLastOutputPath);
@@ -688,19 +642,15 @@ void RecorderBackend::updateTray()
 {
     if (!m_tray)
         return;
-    const bool processing = m_processingBlur || m_processingTrim;
-    m_recordAction->setEnabled(m_serviceAvailable && !m_recording && !processing);
+    m_recordAction->setEnabled(m_serviceAvailable && !m_recording && !m_processingTrim);
     m_pauseAction->setEnabled(m_serviceAvailable && m_recording);
     m_pauseAction->setText(m_paused ? QStringLiteral("Resume") : QStringLiteral("Pause"));
     m_stopAction->setEnabled(m_serviceAvailable && m_recording);
-    m_openBlurAction->setEnabled(!m_lastBlurredOutputFile.isEmpty() && !processing);
-    m_openTrimAction->setEnabled(!m_lastTrimmedOutputFile.isEmpty() && !processing);
+    m_openTrimAction->setEnabled(!m_lastTrimmedOutputFile.isEmpty() && !m_processingTrim);
     m_copyPathAction->setEnabled(!m_lastOutputFile.isEmpty());
-    m_quitAction->setEnabled(!processing);
+    m_quitAction->setEnabled(!m_processingTrim);
     if (m_processingTrim) {
         m_tray->setToolTip(QStringLiteral("Exporting trim · %1%").arg(m_trimProgress));
-    } else if (m_processingBlur) {
-        m_tray->setToolTip(QStringLiteral("Creating motion blur · %1%").arg(m_blurProgress));
     } else if (m_recording) {
         m_tray->setToolTip(QStringLiteral("%1 · %2")
                                .arg(m_paused ? QStringLiteral("Paused") : QStringLiteral("Recording"),
@@ -757,157 +707,6 @@ void RecorderBackend::playStopCue()
         return;
     QApplication::beep();
     QTimer::singleShot(140, qApp, [] { QApplication::beep(); });
-}
-
-void RecorderBackend::startMotionBlur(const QString &source, qint64 durationSeconds)
-{
-    if (m_processingBlur || !QFileInfo::exists(source))
-        return;
-
-    const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
-    if (ffmpeg.isEmpty()) {
-        setError(QStringLiteral("The original was saved, but FFmpeg is unavailable for the blurred copy."));
-        return;
-    }
-
-    m_blurOutputFile = motionBlurOutputPath(source);
-    const QFileInfo outputInfo(m_blurOutputFile);
-    m_blurTemporaryFile = outputInfo.dir().filePath(
-        QStringLiteral(".%1.partial.mp4").arg(outputInfo.completeBaseName()));
-    QFile::remove(m_blurTemporaryFile);
-
-    QString encoder;
-    const QStringList encoderOptions = videoEncoderOptions(&encoder);
-
-    const int frames = motionBlurFrames();
-    QStringList weights;
-    for (int index = 1; index <= frames; ++index)
-        weights.append(QString::number(index));
-    const QString filter = QStringLiteral("tmix=frames=%1:weights=%2")
-                               .arg(frames).arg(weights.join(QLatin1Char(' ')));
-
-    QStringList arguments{
-        QStringLiteral("-hide_banner"),
-        QStringLiteral("-loglevel"), QStringLiteral("error"),
-        QStringLiteral("-nostdin"),
-        QStringLiteral("-y"),
-        QStringLiteral("-i"), source,
-        QStringLiteral("-vf"), filter,
-        QStringLiteral("-map"), QStringLiteral("0:v:0"),
-        QStringLiteral("-map"), QStringLiteral("0:a?"),
-        QStringLiteral("-c:v"), encoder,
-    };
-    arguments.append(encoderOptions);
-    arguments.append({
-        QStringLiteral("-c:a"), QStringLiteral("copy"),
-        QStringLiteral("-movflags"), QStringLiteral("+faststart"),
-        QStringLiteral("-progress"), QStringLiteral("pipe:1"),
-        QStringLiteral("-nostats"),
-        m_blurTemporaryFile,
-    });
-
-    m_blurDurationSeconds = qMax<qint64>(1, durationSeconds);
-    m_blurProgress = 0;
-    m_blurProgressBuffer.clear();
-    m_processingBlur = true;
-    m_blurProcess = new QProcess(this);
-    m_blurProcess->setProcessChannelMode(QProcess::SeparateChannels);
-    connect(m_blurProcess, &QProcess::readyReadStandardOutput,
-            this, &RecorderBackend::updateBlurProgress);
-    connect(m_blurProcess, &QProcess::finished,
-            this, &RecorderBackend::finishMotionBlur);
-    m_blurProcess->start(ffmpeg, arguments);
-    if (!m_blurProcess->waitForStarted(1500)) {
-        setError(QStringLiteral("The original was saved, but motion-blur processing could not start."));
-        m_blurProcess->deleteLater();
-        m_blurProcess = nullptr;
-        m_processingBlur = false;
-    }
-    emit blurStateChanged();
-    updateTray();
-}
-
-void RecorderBackend::updateBlurProgress()
-{
-    if (!m_blurProcess)
-        return;
-    m_blurProgressBuffer += m_blurProcess->readAllStandardOutput();
-
-    qsizetype newline = -1;
-    while ((newline = m_blurProgressBuffer.indexOf('\n')) >= 0) {
-        const QByteArray line = m_blurProgressBuffer.left(newline).trimmed();
-        m_blurProgressBuffer.remove(0, newline + 1);
-        if (!line.startsWith("out_time_us="))
-            continue;
-        bool ok = false;
-        const qint64 microseconds = line.mid(sizeof("out_time_us=") - 1).toLongLong(&ok);
-        if (!ok)
-            continue;
-        const int progress = qBound(0,
-            static_cast<int>(microseconds / (m_blurDurationSeconds * 10000)), 99);
-        if (progress != m_blurProgress) {
-            m_blurProgress = progress;
-            emit blurStateChanged();
-            updateTray();
-        }
-    }
-}
-
-void RecorderBackend::finishMotionBlur(int exitCode, QProcess::ExitStatus status)
-{
-    if (!m_blurProcess)
-        return;
-
-    const QString processError = QString::fromUtf8(m_blurProcess->readAllStandardError()).trimmed();
-    const bool encoded = status == QProcess::NormalExit && exitCode == 0
-        && QFileInfo(m_blurTemporaryFile).size() > 0;
-    bool saved = false;
-    if (encoded)
-        saved = QFile::rename(m_blurTemporaryFile, m_blurOutputFile);
-
-    if (saved) {
-        m_lastBlurredOutputFile = m_blurOutputFile;
-        saveSetting(QStringLiteral("lastBlurredOutputFile"), m_lastBlurredOutputFile);
-        m_blurProgress = 100;
-        setError({});
-        if (m_tray) {
-            notifyTray(QStringLiteral("Blurred copy ready"), m_blurOutputFile);
-        }
-    } else {
-        QFile::remove(m_blurTemporaryFile);
-        const QString detail = processError.isEmpty()
-            ? QStringLiteral("The video encoder could not create the blurred copy.")
-            : processError.section(QLatin1Char('\n'), -1);
-        setError(QStringLiteral("The original is safe. Motion blur failed: %1").arg(detail));
-    }
-
-    m_blurProcess->deleteLater();
-    m_blurProcess = nullptr;
-    m_processingBlur = false;
-    emit blurStateChanged();
-    updateTray();
-}
-
-QString RecorderBackend::motionBlurOutputPath(const QString &source) const
-{
-    const QFileInfo sourceInfo(source);
-    const QString stem = sourceInfo.completeBaseName() + QStringLiteral("-blur");
-    QString candidate = sourceInfo.dir().filePath(stem + QStringLiteral(".mp4"));
-    int suffix = 2;
-    while (QFileInfo::exists(candidate)) {
-        candidate = sourceInfo.dir().filePath(
-            QStringLiteral("%1-%2.mp4").arg(stem).arg(suffix++));
-    }
-    return candidate;
-}
-
-int RecorderBackend::motionBlurFrames() const
-{
-    if (m_motionBlurStrength == QStringLiteral("subtle"))
-        return 2;
-    if (m_motionBlurStrength == QStringLiteral("strong"))
-        return 5;
-    return 3;
 }
 
 void RecorderBackend::updateTrimProgress()
@@ -969,10 +768,11 @@ void RecorderBackend::finishTrim(int exitCode, QProcess::ExitStatus status)
     updateTray();
 }
 
-QString RecorderBackend::trimOutputPath(const QString &source) const
+QString RecorderBackend::trimOutputPath(const QString &source, bool motionBlur) const
 {
     const QFileInfo sourceInfo(source);
-    const QString stem = sourceInfo.completeBaseName() + QStringLiteral("-trim");
+    const QString stem = sourceInfo.completeBaseName()
+        + (motionBlur ? QStringLiteral("-trim-blur") : QStringLiteral("-trim"));
     QString candidate = sourceInfo.dir().filePath(stem + QStringLiteral(".mp4"));
     int suffix = 2;
     while (QFileInfo::exists(candidate)) {

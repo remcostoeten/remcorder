@@ -21,8 +21,10 @@ qt_policy(SET QTP0004 NEW)
 
 qt_add_executable(remcorder
     app/main.cpp
+    app/Branding.h
     app/RecorderBackend.cpp
     app/RecorderBackend.h
+    app/WindowChrome.h
 )
 
 qt_add_qml_module(remcorder
@@ -30,6 +32,26 @@ qt_add_qml_module(remcorder
     VERSION 1.0
     QML_FILES
         app/qml/Main.qml
+)
+
+qt_add_resources(remcorder "branding"
+    PREFIX /branding
+    BASE packaging/icons
+    FILES
+        packaging/icons/remcorder-16.png
+        packaging/icons/remcorder-24.png
+        packaging/icons/remcorder-32.png
+        packaging/icons/remcorder-48.png
+        packaging/icons/remcorder-64.png
+        packaging/icons/remcorder-128.png
+        packaging/icons/remcorder-256.png
+        packaging/icons/remcorder-512.png
+        packaging/icons/tray/remcorder-tray-16.png
+        packaging/icons/tray/remcorder-tray-22.png
+        packaging/icons/tray/remcorder-tray-24.png
+        packaging/icons/tray/remcorder-tray-32.png
+        packaging/icons/tray/remcorder-tray-48.png
+        packaging/icons/tray/remcorder-tray-64.png
 )
 
 target_link_libraries(remcorder PRIVATE

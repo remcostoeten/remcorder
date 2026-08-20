@@ -2,12 +2,12 @@
 pkgname=remcorder
 pkgver=0.0.7
 pkgrel=1
-pkgdesc="Native control center and background service for GPU-accelerated screen recording on Wayland"
+pkgdesc="Native control center and background service for GPU-accelerated screen recording"
 arch=('x86_64')
 url="https://github.com/remcostoeten/remcorder"
 license=('MIT')
 depends=('qt6-base' 'qt6-declarative' 'qt6-multimedia' 'gpu-screen-recorder' 'systemd')
-optdepends=('ffmpeg: motion-blur copies and trim export'
+optdepends=('ffmpeg: trim export and motion blur'
             'libpulse: microphone meter and gain control')
 makedepends=('cmake' 'go' 'qt6-declarative')
 source=("remcorder-$pkgver.tar.gz")
@@ -44,8 +44,10 @@ package() {
     "$pkgdir/usr/share/remcorder/overlay/main.qml"
   install -Dm644 packaging/remcorder.desktop \
     "$pkgdir/usr/share/applications/remcorder.desktop"
-  install -Dm644 packaging/remcorder.svg \
-    "$pkgdir/usr/share/icons/hicolor/scalable/apps/remcorder.svg"
+  for size in 16 24 32 48 64 128 256 512; do
+    install -Dm644 "packaging/icons/remcorder-$size.png" \
+      "$pkgdir/usr/share/icons/hicolor/${size}x${size}/apps/remcorder.png"
+  done
   install -Dm644 LICENSE \
     "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 
