@@ -37,6 +37,8 @@ class RecorderBackend final : public QObject
     Q_PROPERTY(QVariantList inputDevices READ inputDevices NOTIFY devicesChanged)
 
     Q_PROPERTY(QString captureSource READ captureSource WRITE setCaptureSource NOTIFY settingsChanged)
+    Q_PROPERTY(QString captureRegion READ captureRegion NOTIFY settingsChanged)
+    Q_PROPERTY(QString captureRegionLabel READ captureRegionLabel NOTIFY settingsChanged)
     Q_PROPERTY(bool desktopAudioEnabled READ desktopAudioEnabled WRITE setDesktopAudioEnabled NOTIFY settingsChanged)
     Q_PROPERTY(bool microphoneEnabled READ microphoneEnabled WRITE setMicrophoneEnabled NOTIFY settingsChanged)
     Q_PROPERTY(QString outputDevice READ outputDevice WRITE setOutputDevice NOTIFY settingsChanged)
@@ -78,6 +80,8 @@ public:
     QVariantList inputDevices() const { return m_inputDevices; }
 
     QString captureSource() const { return m_captureSource; }
+    QString captureRegion() const { return m_captureRegion; }
+    QString captureRegionLabel() const;
     bool desktopAudioEnabled() const { return m_desktopAudioEnabled; }
     bool microphoneEnabled() const { return m_microphoneEnabled; }
     QString outputDevice() const { return m_outputDevice; }
@@ -110,6 +114,12 @@ public:
     void setMicPlaybackEnabled(bool value);
     void setMicGain(qreal value);
 
+    Q_INVOKABLE void setCaptureRegionFromRect(qreal x,
+                                             qreal y,
+                                             qreal width,
+                                             qreal height,
+                                             qreal devicePixelRatio);
+    Q_INVOKABLE void clearCaptureRegion();
     Q_INVOKABLE void startRecording();
     Q_INVOKABLE void stopRecording();
     Q_INVOKABLE void togglePause();
@@ -196,6 +206,7 @@ private:
     QVariantList m_inputDevices;
 
     QString m_captureSource = QStringLiteral("screen");
+    QString m_captureRegion;
     bool m_desktopAudioEnabled = true;
     bool m_microphoneEnabled = false;
     QString m_outputDevice = QStringLiteral("default_output");

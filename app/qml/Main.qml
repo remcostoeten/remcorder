@@ -10,26 +10,26 @@ ApplicationWindow {
     readonly property string sans: "Inter"
     readonly property string mono: "JetBrains Mono"
 
-    readonly property color canvas: "#0A0C11"
-    readonly property color canvasLift: "#0E1118"
-    readonly property color surface: "#13171F"
-    readonly property color surfaceHi: "#191E28"
-    readonly property color stroke: "#242B37"
-    readonly property color strokeSoft: "#1B212B"
-    readonly property color ink: "#EEF1F7"
-    readonly property color inkDim: "#98A3B5"
-    readonly property color inkFaint: "#697384"
-    readonly property color signal: "#FF3D57"
-    readonly property color amber: "#FFB86B"
-    readonly property color teal: "#4FD1C5"
-    readonly property color focusBlue: "#7C93FF"
+    readonly property color canvas: "#0A0A0A"
+    readonly property color canvasLift: "#101010"
+    readonly property color surface: "#151515"
+    readonly property color surfaceHi: "#1C1C1C"
+    readonly property color stroke: "#282828"
+    readonly property color strokeSoft: "#1E1E1E"
+    readonly property color ink: "#E8E8E8"
+    readonly property color inkDim: "#8C8C8C"
+    readonly property color inkFaint: "#5E5E5E"
+    readonly property color signal: "#E5484D"
+    readonly property color amber: "#E8A33D"
+    readonly property color success: "#3FB950"
+    readonly property color focusBlue: "#58A6FF"
 
     readonly property bool busy: backend.processingTrim
     readonly property color accent: backend.processingTrim
-        ? teal
+        ? success
         : backend.recording
         ? (backend.paused ? amber : signal)
-        : "#5C6779"
+        : "#6B6B6B"
 
     readonly property bool maximized: visibility === Window.Maximized || visibility === Window.FullScreen
 
@@ -146,7 +146,7 @@ ApplicationWindow {
             border.width: 1
             border.color: control.activeFocus
                 ? control.accentColor
-                : control.hovered ? "#33404F" : root.stroke
+                : control.hovered ? "#3A3A3A" : root.stroke
 
             Behavior on color { ColorAnimation { duration: 130 } }
             Behavior on border.color { ColorAnimation { duration: 130 } }
@@ -215,7 +215,7 @@ ApplicationWindow {
 
         contentItem: Text {
             text: primary.text
-            color: primary.enabled ? "#FFFFFF" : "#8D96A6"
+            color: primary.enabled ? "#FFFFFF" : "#8A8A8A"
             font: primary.font
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
@@ -291,11 +291,11 @@ ApplicationWindow {
             y: 4
             radius: 11
             border.width: 1
-            border.color: "#3A445C"
+            border.color: "#3C3C3C"
 
             gradient: Gradient {
-                GradientStop { position: 0; color: "#2B3346" }
-                GradientStop { position: 1; color: "#222939" }
+                GradientStop { position: 0; color: "#242424" }
+                GradientStop { position: 1; color: "#1B1B1B" }
             }
 
             Behavior on x {
@@ -355,11 +355,11 @@ ApplicationWindow {
             x: toggle.width - width
             y: (toggle.height - height) / 2
             radius: 13
-            color: toggle.checked ? root.focusBlue : "#2A3140"
+            color: toggle.checked ? root.focusBlue : "#2A2A2A"
             border.width: 1
             border.color: toggle.activeFocus
                 ? root.ink
-                : toggle.checked ? Qt.lighter(root.focusBlue, 1.2) : "#39414F"
+                : toggle.checked ? Qt.lighter(root.focusBlue, 1.2) : "#3A3A3A"
 
             Rectangle {
                 x: toggle.checked ? parent.width - width - 3 : 3
@@ -367,7 +367,7 @@ ApplicationWindow {
                 width: 20
                 height: 20
                 radius: 10
-                color: toggle.checked ? "#FFFFFF" : "#9AA4B4"
+                color: toggle.checked ? "#FFFFFF" : "#9A9A9A"
                 scale: toggle.hovered ? 1.06 : 1
 
                 Behavior on x {
@@ -409,7 +409,7 @@ ApplicationWindow {
             border.width: 1
             border.color: combo.activeFocus
                 ? root.focusBlue
-                : combo.hovered ? "#33404F" : root.stroke
+                : combo.hovered ? "#3A3A3A" : root.stroke
 
             Behavior on color { ColorAnimation { duration: 130 } }
             Behavior on border.color { ColorAnimation { duration: 130 } }
@@ -508,7 +508,7 @@ ApplicationWindow {
 
             background: Rectangle {
                 radius: 10
-                color: option.highlighted ? "#2A3244" : "transparent"
+                color: option.highlighted ? "#232323" : "transparent"
                 Behavior on color { ColorAnimation { duration: 100 } }
             }
         }
@@ -533,7 +533,7 @@ ApplicationWindow {
             x: 1
             y: 1
             radius: 4
-            color: meter.level > 0.92 ? root.signal : meter.level > 0.72 ? root.amber : root.teal
+            color: meter.level > 0.92 ? root.signal : meter.level > 0.72 ? root.amber : root.success
 
             Behavior on width { NumberAnimation { duration: 55 } }
             Behavior on color { ColorAnimation { duration: 120 } }
@@ -637,7 +637,7 @@ ApplicationWindow {
                 color: "#1AFFFFFF"
             }
         }
-        Overlay.modal: Rectangle { color: "#B3070910" }
+        Overlay.modal: Rectangle { color: "#B3060606" }
 
         contentItem: ColumnLayout {
             spacing: 15
@@ -680,7 +680,7 @@ ApplicationWindow {
                 Layout.preferredHeight: Math.min(270, width * 9 / 16)
                 Layout.minimumHeight: 132
                 radius: 14
-                color: "#06070B"
+                color: "#060606"
                 border.width: 1
                 border.color: root.strokeSoft
                 clip: true
@@ -758,7 +758,7 @@ ApplicationWindow {
                         anchors.verticalCenter: parent.verticalCenter
                         height: 6
                         radius: 3
-                        color: "#20262F"
+                        color: "#222222"
                     }
                     Rectangle {
                         x: trimRange.first.visualPosition * parent.width
@@ -772,7 +772,7 @@ ApplicationWindow {
                         gradient: Gradient {
                             orientation: Gradient.Horizontal
                             GradientStop { position: 0; color: root.focusBlue }
-                            GradientStop { position: 1; color: root.teal }
+                            GradientStop { position: 1; color: root.success }
                         }
                     }
                 }
@@ -801,7 +801,7 @@ ApplicationWindow {
                     radius: 10
                     color: "#FFFFFF"
                     border.width: 4
-                    border.color: root.teal
+                    border.color: root.success
                     scale: trimRange.second.pressed ? 1.15 : 1
 
                     Behavior on scale { NumberAnimation { duration: 110 } }
@@ -848,7 +848,7 @@ ApplicationWindow {
             Card {
                 Layout.fillWidth: true
                 implicitHeight: blurColumn.implicitHeight + 24
-                border.color: trimDialog.motionBlur ? "#2F3E63" : root.stroke
+                border.color: trimDialog.motionBlur ? "#26384A" : root.stroke
 
                 Behavior on border.color { ColorAnimation { duration: 180 } }
 
@@ -880,9 +880,9 @@ ApplicationWindow {
                                     Layout.preferredHeight: 18
                                     Layout.preferredWidth: betaLabel.implicitWidth + 14
                                     radius: 9
-                                    color: "#1B2438"
+                                    color: "#141A22"
                                     border.width: 1
-                                    border.color: "#2F3E63"
+                                    border.color: "#26384A"
 
                                     Text {
                                         id: betaLabel
@@ -1175,7 +1175,7 @@ ApplicationWindow {
             contentItem: Rectangle {
                 implicitWidth: 5
                 radius: 3
-                color: bar.pressed ? root.inkDim : "#39414F"
+                color: bar.pressed ? root.inkDim : "#3A3A3A"
                 opacity: bar.active ? 1 : 0
 
                 Behavior on opacity { NumberAnimation { duration: 220 } }
@@ -1283,8 +1283,8 @@ ApplicationWindow {
                             text: "Stop"
                             implicitWidth: 78
                             implicitHeight: 44
-                            fill: "#2E1B21"
-                            textColor: "#FF97A4"
+                            fill: "#2A1618"
+                            textColor: "#F0888C"
                             onClicked: backend.stopRecording()
                         }
                     }
@@ -1294,7 +1294,7 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 6
                         radius: 3
-                        color: "#20262F"
+                        color: "#222222"
 
                         Rectangle {
                             width: parent.width * backend.trimProgress / 100
@@ -1317,8 +1317,8 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 implicitHeight: errorRow.implicitHeight + 24
                 radius: 14
-                color: "#231B12"
-                border.color: "#4E3D22"
+                color: "#221A0E"
+                border.color: "#4A3A1C"
 
                 RowLayout {
                     id: errorRow
@@ -1331,7 +1331,7 @@ ApplicationWindow {
                         Layout.preferredWidth: 20
                         Layout.preferredHeight: 20
                         radius: 10
-                        color: "#3A2C17"
+                        color: "#382B14"
 
                         Text {
                             anchors.centerIn: parent
@@ -1346,7 +1346,7 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         text: backend.errorMessage
                         wrapMode: Text.WordWrap
-                        color: "#E7D6B8"
+                        color: "#E2D2B0"
                         font.family: root.sans
                         font.pixelSize: 12
                     }
@@ -1608,8 +1608,8 @@ ApplicationWindow {
                                     implicitWidth: 104
                                     implicitHeight: 36
                                     enabled: !backend.recording
-                                    fill: backend.micPlaybackEnabled ? "#16303A" : root.surfaceHi
-                                    textColor: backend.micPlaybackEnabled ? root.teal : root.ink
+                                    fill: backend.micPlaybackEnabled ? "#132A1B" : root.surfaceHi
+                                    textColor: backend.micPlaybackEnabled ? root.success : root.ink
                                     Accessible.name: "Play the microphone back through the speakers"
                                     onClicked: backend.micPlaybackEnabled = !backend.micPlaybackEnabled
                                 }
@@ -1652,7 +1652,7 @@ ApplicationWindow {
                                         width: gainSlider.availableWidth
                                         height: 6
                                         radius: 3
-                                        color: "#20262F"
+                                        color: "#222222"
 
                                         Rectangle {
                                             width: gainSlider.visualPosition * parent.width
@@ -1871,7 +1871,7 @@ ApplicationWindow {
                                 Layout.preferredWidth: 8
                                 Layout.preferredHeight: 8
                                 radius: 4
-                                color: root.teal
+                                color: root.success
                             }
                             ColumnLayout {
                                 Layout.fillWidth: true

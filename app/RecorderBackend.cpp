@@ -119,6 +119,64 @@ void RecorderBackend::setCaptureSource(const QString &value)
     emit settingsChanged();
 }
 
+QString RecorderBackend::captureRegionLabel() const
+{
+    if (m_captureRegion.isEmpty())
+        return QStringLiteral("No region selected");
+
+    QStringList parts = m_captureRegion.split(QLatin1Char('+'));
+    if (parts.size() != 3)
+        return m_captureRegion;
+    return QStringLiteral("%1 px at %2, %3")
+        .arg(parts[0].replace(QLatin1Char('x'), QStringLiteral(" × ")),
+             parts.at(1),
+             parts.at(2));
+}
+
+void RecorderBackend::setCaptureRegionFromRect(qreal x,
+                                               qreal y,
+                                               qreal width,
+                                               qreal height,
+                                               qreal devicePixelRatio)
+{
+    // Wayland compositors hand out logical coordinates, X11 hands out device pixels,
+    // and gpu-screen-recorder speaks whichever the session uses.
+    const qreal scale = QGuiApplication::platformName().contains(QStringLiteral("wayland"))
+        ? 1.0
+        : (devicePixelRatio > 0 ? devicePixelRatio : 1.0);
+
+    const int scaledWidth = qRound(width * scale);
+    const int scaledHeight = qRound(height * scale);
+    if (scaledWidth < 16 || scaledHeight < 16) {
+        setError(QStringLiteral("That region is too small; drag a larger area."));
+        return;
+    }
+
+    const QString region = QStringLiteral("%1x%2+%3+%4")
+        .arg(scaledWidth)
+        .arg(scaledHeight)
+        .arg(qRound(x * scale))
+        .arg(qRound(y * scale));
+    if (region == m_captureRegion && m_captureSource == QStringLiteral("region"))
+        return;
+
+    m_captureRegion = region;
+    m_captureSource = QStringLiteral("region");
+    saveSetting(QStringLiteral("captureRegion"), region);
+    saveSetting(QStringLiteral("captureSource"), m_captureSource);
+    setError({});
+    emit settingsChanged();
+}
+
+void RecorderBackend::clearCaptureRegion()
+{
+    if (m_captureRegion.isEmpty())
+        return;
+    m_captureRegion.clear();
+    saveSetting(QStringLiteral("captureRegion"), m_captureRegion);
+    emit settingsChanged();
+}
+
 void RecorderBackend::setDesktopAudioEnabled(bool value)
 {
     if (value == m_desktopAudioEnabled)
@@ -204,6 +262,10 @@ void RecorderBackend::startRecording()
         setError(QStringLiteral("Wait for post-processing to finish before starting another recording."));
         return;
     }
+    if (m_captureSource == QStringLiteral("region") && m_captureRegion.isEmpty()) {
+        setError(QStringLiteral("Drag a region to capture before recording."));
+        return;
+    }
     QStringList audio;
     if (m_desktopAudioEnabled)
         audio << m_outputDevice;
@@ -231,6 +293,8 @@ void RecorderBackend::startRecording()
         {QStringLiteral("output_directory"), m_outputDirectory},
         {QStringLiteral("cursor"), m_captureCursor},
     };
+    if (m_captureSource == QStringLiteral("region"))
+        options.insert(QStringLiteral("region"), m_captureRegion);
     QJsonObject response;
     m_activeCodec = codec;
     if (request({
@@ -559,6 +623,7 @@ void RecorderBackend::loadSettings()
 {
     QSettings settings(organization, application);
     m_captureSource = settings.value(QStringLiteral("captureSource"), QStringLiteral("screen")).toString();
+    m_captureRegion = settings.value(QStringLiteral("captureRegion")).toString();
     m_desktopAudioEnabled = settings.value(QStringLiteral("desktopAudioEnabled"), true).toBool();
     m_microphoneEnabled = settings.value(QStringLiteral("microphoneEnabled"), false).toBool();
     m_outputDevice = settings.value(QStringLiteral("outputDevice"), QStringLiteral("default_output")).toString();

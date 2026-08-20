@@ -157,6 +157,53 @@ func testRecorder(outputDirectory, binary string) *Recorder {
 	}
 }
 
+func TestRegionCaptureForwardsTheRegionArgument(t *testing.T) {
+	tempDirectory := t.TempDir()
+	argumentsPath := filepath.Join(tempDirectory, "arguments")
+	binary := writeFakeRecorder(t, tempDirectory, `
+output=""
+for argument in "$@"; do output="$argument"; done
+printf '%s\n' "$@" > "`+argumentsPath+`"
+trap 'printf "finalized" > "$output"; exit 0' INT
+while true; do sleep 0.05; done
+`)
+	engine := testRecorder(tempDirectory, binary)
+
+	if _, err := engine.StartWithOptions(StartOptions{Capture: "region", Region: "800x600+120+40"}); err != nil {
+		t.Fatalf("StartWithOptions() error = %v", err)
+	}
+	// Give the shell enough time to install its signal handler.
+	time.Sleep(150 * time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, err := engine.Stop(ctx); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+
+	arguments, err := os.ReadFile(argumentsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(arguments), "-region\n800x600+120+40\n") {
+		t.Fatalf("arguments = %q, want -region 800x600+120+40", arguments)
+	}
+	if !strings.Contains(string(arguments), "-w\nregion\n") {
+		t.Fatalf("arguments = %q, want -w region", arguments)
+	}
+}
+
+func TestRegionCaptureRejectsAMissingOrMalformedRegion(t *testing.T) {
+	tempDirectory := t.TempDir()
+	binary := writeFakeRecorder(t, tempDirectory, "sleep 5\n")
+	engine := testRecorder(tempDirectory, binary)
+
+	for _, region := range []string{"", "not-a-region", "800x600", "800x600+120"} {
+		if _, err := engine.StartWithOptions(StartOptions{Capture: "region", Region: region}); err == nil {
+			t.Fatalf("StartWithOptions(region=%q) error = nil, want a validation error", region)
+		}
+	}
+}
+
 func writeFakeRecorder(t *testing.T, directory, body string) string {
 	t.Helper()
 	path := filepath.Join(directory, "fake-gpu-screen-recorder")
