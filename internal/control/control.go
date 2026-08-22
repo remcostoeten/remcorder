@@ -22,11 +22,14 @@ const (
 	ActionPause       Action = "pause"
 	ActionResume      Action = "resume"
 	ActionTogglePause Action = "toggle-pause"
+	ActionPrepare     Action = "prepare-selection"
+	ActionCancelPrep  Action = "cancel-selection"
 )
 
 func (action Action) Valid() bool {
 	switch action {
-	case ActionStatus, ActionStart, ActionStop, ActionToggle, ActionPause, ActionResume, ActionTogglePause:
+	case ActionStatus, ActionStart, ActionStop, ActionToggle, ActionPause, ActionResume, ActionTogglePause,
+		ActionPrepare, ActionCancelPrep:
 		return true
 	default:
 		return false

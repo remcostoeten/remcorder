@@ -19,6 +19,7 @@ MP4 files are finalized instead of corrupted.
 
 - Start, pause, resume, stop, toggle, and inspect a recording over the socket
 - Direct monitor capture by default, portal capture on request
+- Drag-to-select region capture, spanning displays, remembered between sessions
 - Desktop audio, configurable FPS/codec/quality, timestamped filenames
 - Machine-readable JSON status for panels and scripts
 - A compact, click-through QML overlay that appears only while recording
@@ -86,6 +87,19 @@ remcorder --tray
 
 `--tray` is ignored when the desktop has no tray, or when `--trim` is passed, so
 the app never starts invisible with no way to reach it.
+
+### Start delay and sound cues
+
+**Capture → Start delay** (Off / 3s / 5s / 10s) holds the recording back so you
+can bring the right window forward first. During the countdown the hero card
+shows the seconds left and the record button turns into a cancel button; `Esc`,
+the tray's stop entry, and clicking the button all abort it.
+
+**Capture → Sound cues** plays a synthesized two-note ping when a recording
+starts, a falling pair when it stops, and a tick per countdown second. The tones
+are generated in memory and played through the default output device, so they do
+not depend on the system bell being enabled. Toggling the setting on plays a
+sample ping.
 
 ### Microphone
 
@@ -161,7 +175,8 @@ ExecStart=%h/.local/bin/remcorderd -capture portal
 ```
 
 ```text
--capture screen|portal|DP-1
+-capture screen|portal|region|DP-1
+-region 1280x720+320+180
 -fps 60
 -audio default_output
 -codec h264|hevc|av1
@@ -172,6 +187,18 @@ ExecStart=%h/.local/bin/remcorderd -capture portal
 
 Run `gpu-screen-recorder --list-monitors` and
 `gpu-screen-recorder --list-audio-devices` to discover exact source names.
+
+### Region capture
+
+Pick **Region** under Capture and drag a rectangle; the overlay dims every
+display, follows the drag across monitors, and shows the live pixel size. Esc or
+right-click cancels. The chosen rectangle is stored as `WxH+X+Y` and reused
+until you reselect, so a keybound `remcorderctl toggle` keeps recording the same
+area. `-region` is only honoured when the capture source is `region`, and the
+daemon refuses to start a region recording without one.
+
+Coordinates follow the session: Wayland compositors are addressed in logical
+coordinates (like `slurp`), X11 in device pixels (like `slop`).
 
 ## Development
 

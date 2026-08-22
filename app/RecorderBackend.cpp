@@ -7,6 +7,7 @@
 #include <QAudioDevice>
 #include <QAudioSink>
 #include <QAudioSource>
+#include <QBuffer>
 #include <QClipboard>
 #include <QCoreApplication>
 #include <QDesktopServices>
@@ -53,6 +54,37 @@ QString motionBlurFilter(const QString &strength)
         .arg(weights.join(QLatin1Char(' ')));
 }
 
+QByteArray renderTones(const QAudioFormat &format, const QList<QPair<double, int>> &tones)
+{
+    const double rate = format.sampleRate();
+    const double fadeFrames = qMax(1.0, rate * 0.006);
+    const int channels = format.channelCount();
+    const bool isFloat = format.sampleFormat() == QAudioFormat::Float;
+
+    QByteArray data;
+    for (const auto &tone : tones) {
+        const double frequency = tone.first;
+        const int frames = static_cast<int>(rate * tone.second / 1000.0);
+        for (int frame = 0; frame < frames; ++frame) {
+            double amplitude = 0.0;
+            if (frequency > 0.0) {
+                const double fade = std::min({1.0, frame / fadeFrames, (frames - frame) / fadeFrames});
+                amplitude = 0.3 * fade * std::sin(2.0 * M_PI * frequency * frame / rate);
+            }
+            for (int channel = 0; channel < channels; ++channel) {
+                if (isFloat) {
+                    const float value = static_cast<float>(amplitude);
+                    data.append(reinterpret_cast<const char *>(&value), sizeof(value));
+                } else {
+                    const qint16 value = static_cast<qint16>(amplitude * 32767.0);
+                    data.append(reinterpret_cast<const char *>(&value), sizeof(value));
+                }
+            }
+        }
+    }
+    return data;
+}
+
 QString firstValue(const QVariantList &items, const QString &fallback)
 {
     if (items.isEmpty())
@@ -74,6 +106,7 @@ RecorderBackend::RecorderBackend(QObject *parent)
 
     loadSettings();
     setupTray();
+    connect(this, &RecorderBackend::countdownChanged, this, &RecorderBackend::updateTray);
 
     m_pollTimer = new QTimer(this);
     m_pollTimer->setInterval(1000);
@@ -94,6 +127,8 @@ RecorderBackend::RecorderBackend(QObject *parent)
 RecorderBackend::~RecorderBackend()
 {
     stopMicMonitor();
+    if (m_cueSink)
+        m_cueSink->stop();
     if (m_trimProcess && m_trimProcess->state() != QProcess::NotRunning) {
         m_trimProcess->terminate();
         if (!m_trimProcess->waitForFinished(1500)) {
@@ -116,6 +151,8 @@ void RecorderBackend::setCaptureSource(const QString &value)
         return;
     m_captureSource = value;
     saveSetting(QStringLiteral("captureSource"), value);
+    if (m_choosingSource || m_selectionReady)
+        abandonCaptureSelection();
     emit settingsChanged();
 }
 
@@ -253,11 +290,31 @@ void RecorderBackend::setSoundCuesEnabled(bool value)
         return;
     m_soundCuesEnabled = value;
     saveSetting(QStringLiteral("soundCuesEnabled"), value);
+    if (value)
+        playCue({{880.0, 70}});
+    emit settingsChanged();
+}
+
+void RecorderBackend::setStartDelaySeconds(int value)
+{
+    const int clamped = qBound(0, value, 30);
+    if (clamped == m_startDelaySeconds)
+        return;
+    m_startDelaySeconds = clamped;
+    saveSetting(QStringLiteral("startDelaySeconds"), clamped);
     emit settingsChanged();
 }
 
 void RecorderBackend::startRecording()
 {
+    if (m_choosingSource) {
+        abandonCaptureSelection();
+        return;
+    }
+    if (m_countdownRemaining > 0) {
+        cancelCountdown();
+        return;
+    }
     if (m_processingTrim) {
         setError(QStringLiteral("Wait for post-processing to finish before starting another recording."));
         return;
@@ -266,6 +323,83 @@ void RecorderBackend::startRecording()
         setError(QStringLiteral("Drag a region to capture before recording."));
         return;
     }
+    if (!m_recording && m_captureSource == QStringLiteral("portal") && !m_selectionReady) {
+        if (prepareCaptureSelection())
+            return;
+    }
+    beginCountdown();
+}
+
+void RecorderBackend::beginCountdown()
+{
+    if (m_startDelaySeconds <= 0 || m_recording) {
+        beginRecording();
+        return;
+    }
+
+    if (!m_countdownTimer) {
+        m_countdownTimer = new QTimer(this);
+        m_countdownTimer->setInterval(1000);
+        connect(m_countdownTimer, &QTimer::timeout, this, [this] {
+            --m_countdownRemaining;
+            emit countdownChanged();
+            if (m_countdownRemaining > 0) {
+                playCountdownTick(m_countdownRemaining == 1);
+                return;
+            }
+            m_countdownTimer->stop();
+            beginRecording();
+        });
+    }
+    m_countdownRemaining = m_startDelaySeconds;
+    emit countdownChanged();
+    playCountdownTick(m_countdownRemaining == 1);
+    m_countdownTimer->start();
+}
+
+bool RecorderBackend::prepareCaptureSelection()
+{
+    QJsonObject response;
+    if (!request({{QStringLiteral("action"), QStringLiteral("prepare-selection")}}, &response, true, 4000)) {
+        m_startAfterSelection = false;
+        return false;
+    }
+    m_startAfterSelection = true;
+    applyResponse(response);
+    if (!m_choosingSource) {
+        m_startAfterSelection = false;
+        return false;
+    }
+    setPollInterval(200);
+    return true;
+}
+
+void RecorderBackend::abandonCaptureSelection()
+{
+    m_startAfterSelection = false;
+    QJsonObject response;
+    if (request({{QStringLiteral("action"), QStringLiteral("cancel-selection")}}, &response, true, 4000))
+        applyResponse(response);
+}
+
+void RecorderBackend::setPollInterval(int milliseconds)
+{
+    if (m_pollTimer && m_pollTimer->interval() != milliseconds)
+        m_pollTimer->setInterval(milliseconds);
+}
+
+void RecorderBackend::cancelCountdown()
+{
+    if (m_countdownTimer)
+        m_countdownTimer->stop();
+    if (m_countdownRemaining == 0)
+        return;
+    m_countdownRemaining = 0;
+    emit countdownChanged();
+}
+
+void RecorderBackend::beginRecording()
+{
     QStringList audio;
     if (m_desktopAudioEnabled)
         audio << m_outputDevice;
@@ -295,6 +429,8 @@ void RecorderBackend::startRecording()
     };
     if (m_captureSource == QStringLiteral("region"))
         options.insert(QStringLiteral("region"), m_captureRegion);
+    if (m_captureSource == QStringLiteral("portal"))
+        options.insert(QStringLiteral("restore_portal_session"), m_selectionReady);
     QJsonObject response;
     m_activeCodec = codec;
     if (request({
@@ -307,6 +443,10 @@ void RecorderBackend::startRecording()
 
 void RecorderBackend::stopRecording()
 {
+    if (m_countdownRemaining > 0) {
+        cancelCountdown();
+        return;
+    }
     QJsonObject response;
     if (request({{QStringLiteral("action"), QStringLiteral("stop")}}, &response, true, 13000))
         applyResponse(response);
@@ -575,11 +715,17 @@ void RecorderBackend::applyResponse(const QJsonObject &response)
     const bool wasRecording = m_recording;
     const QString previousLast = m_lastOutputFile;
 
+    const bool wasChoosingSource = m_choosingSource;
+    const bool wasCapturing = m_recording && !m_awaitingFirstFrame;
+
     m_recording = state.value(QStringLiteral("recording")).toBool();
     m_paused = state.value(QStringLiteral("paused")).toBool();
     m_durationSeconds = state.value(QStringLiteral("duration_seconds")).toInteger();
     m_outputFile = state.value(QStringLiteral("output_file")).toString();
     m_lastOutputFile = state.value(QStringLiteral("last_output_file")).toString();
+    m_awaitingFirstFrame = state.value(QStringLiteral("awaiting_first_frame")).toBool();
+    m_choosingSource = state.value(QStringLiteral("selecting")).toBool();
+    m_selectionReady = state.value(QStringLiteral("selection_ready")).toBool();
 
     const QString stateError = state.value(QStringLiteral("last_error")).toString();
     if (!stateError.isEmpty())
@@ -588,7 +734,21 @@ void RecorderBackend::applyResponse(const QJsonObject &response)
     emit stateChanged();
     updateTray();
 
-    if (!wasRecording && m_recording) {
+    if (wasChoosingSource && !m_choosingSource) {
+        setPollInterval(1000);
+        const bool wanted = m_startAfterSelection;
+        m_startAfterSelection = false;
+        // applyResponse runs inside a daemon request; queue so the next one is not refused.
+        if (wanted && m_selectionReady)
+            QTimer::singleShot(0, this, &RecorderBackend::beginCountdown);
+    }
+
+    if (m_recording && m_awaitingFirstFrame)
+        setPollInterval(200);
+    else if (!m_choosingSource)
+        setPollInterval(1000);
+
+    if (!wasCapturing && m_recording && !m_awaitingFirstFrame) {
         setMicPlaybackEnabled(false);
         playStartCue();
     }
@@ -635,6 +795,8 @@ void RecorderBackend::loadSettings()
     if (!QFileInfo::exists(m_lastTrimmedOutputFile))
         m_lastTrimmedOutputFile.clear();
     m_soundCuesEnabled = settings.value(QStringLiteral("soundCuesEnabled"), true).toBool();
+    m_startDelaySeconds = qBound(
+        0, settings.value(QStringLiteral("startDelaySeconds"), 0).toInt(), 30);
     m_recentRecordings.clear();
     for (const QVariant &entry : settings.value(QStringLiteral("recentRecordings")).toList()) {
         if (QFileInfo::exists(entry.toString()))
@@ -708,6 +870,11 @@ void RecorderBackend::updateTray()
     if (!m_tray)
         return;
     m_recordAction->setEnabled(m_serviceAvailable && !m_recording && !m_processingTrim);
+    m_recordAction->setText(m_countdownRemaining > 0
+                                ? QStringLiteral("Cancel countdown")
+                                : m_choosingSource
+                                ? QStringLiteral("Cancel selection")
+                                : QStringLiteral("Start recording"));
     m_pauseAction->setEnabled(m_serviceAvailable && m_recording);
     m_pauseAction->setText(m_paused ? QStringLiteral("Resume") : QStringLiteral("Pause"));
     m_stopAction->setEnabled(m_serviceAvailable && m_recording);
@@ -716,6 +883,12 @@ void RecorderBackend::updateTray()
     m_quitAction->setEnabled(!m_processingTrim);
     if (m_processingTrim) {
         m_tray->setToolTip(QStringLiteral("Exporting trim · %1%").arg(m_trimProgress));
+    } else if (m_countdownRemaining > 0) {
+        m_tray->setToolTip(QStringLiteral("Remcorder · Starting in %1s").arg(m_countdownRemaining));
+    } else if (m_choosingSource) {
+        m_tray->setToolTip(QStringLiteral("Remcorder · Choose what to record"));
+    } else if (m_recording && m_awaitingFirstFrame) {
+        m_tray->setToolTip(QStringLiteral("Remcorder · Waiting for the first frame"));
     } else if (m_recording) {
         m_tray->setToolTip(QStringLiteral("%1 · %2")
                                .arg(m_paused ? QStringLiteral("Paused") : QStringLiteral("Recording"),
@@ -760,18 +933,76 @@ void RecorderBackend::rememberRecentRecording(const QString &path)
     updateRecentMenu();
 }
 
+void RecorderBackend::playCue(const QList<QPair<double, int>> &tones)
+{
+    if (!m_soundCuesEnabled || tones.isEmpty())
+        return;
+
+    const QAudioDevice device = QMediaDevices::defaultAudioOutput();
+    if (device.isNull())
+        return;
+
+    QAudioFormat format;
+    format.setSampleRate(44100);
+    format.setChannelCount(1);
+    format.setSampleFormat(QAudioFormat::Int16);
+    if (!device.isFormatSupported(format))
+        format = device.preferredFormat();
+    if (format.sampleFormat() != QAudioFormat::Int16
+        && format.sampleFormat() != QAudioFormat::Float) {
+        QApplication::beep();
+        return;
+    }
+
+    const QByteArray samples = renderTones(format, tones);
+    if (samples.isEmpty())
+        return;
+
+    releaseCueSink();
+
+    auto *buffer = new QBuffer(this);
+    buffer->setData(samples);
+    buffer->open(QIODevice::ReadOnly);
+    m_cueBuffer = buffer;
+
+    m_cueSink = new QAudioSink(device, format, this);
+    connect(m_cueSink, &QAudioSink::stateChanged, this, [this](QAudio::State state) {
+        if (state == QAudio::IdleState)
+            releaseCueSink();
+    });
+    m_cueSink->start(m_cueBuffer);
+}
+
+void RecorderBackend::releaseCueSink()
+{
+    if (m_cueSink) {
+        m_cueSink->stop();
+        m_cueSink->deleteLater();
+        m_cueSink = nullptr;
+    }
+    if (m_cueBuffer) {
+        m_cueBuffer->close();
+        m_cueBuffer->deleteLater();
+        m_cueBuffer = nullptr;
+    }
+}
+
 void RecorderBackend::playStartCue()
 {
-    if (m_soundCuesEnabled)
-        QApplication::beep();
+    playCue({{784.0, 80}, {0.0, 30}, {1174.7, 130}});
 }
 
 void RecorderBackend::playStopCue()
 {
-    if (!m_soundCuesEnabled)
-        return;
-    QApplication::beep();
-    QTimer::singleShot(140, qApp, [] { QApplication::beep(); });
+    playCue({{1174.7, 80}, {0.0, 30}, {587.3, 170}});
+}
+
+void RecorderBackend::playCountdownTick(bool last)
+{
+    if (last)
+        playCue({{1046.5, 150}});
+    else
+        playCue({{659.3, 70}});
 }
 
 void RecorderBackend::updateTrimProgress()

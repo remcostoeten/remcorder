@@ -18,7 +18,7 @@ check:
 	go vet ./...
 	cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 	cmake --build build
-	qmllint app/qml/Main.qml
+	qmllint app/qml/Main.qml app/qml/RegionSelector.qml
 
 install: check
 	install -d "$(PREFIX)/bin"

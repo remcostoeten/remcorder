@@ -47,6 +47,11 @@ class RecorderBackend final : public QObject
     Q_PROPERTY(QString outputDirectory READ outputDirectory WRITE setOutputDirectory NOTIFY settingsChanged)
     Q_PROPERTY(bool captureCursor READ captureCursor WRITE setCaptureCursor NOTIFY settingsChanged)
     Q_PROPERTY(bool soundCuesEnabled READ soundCuesEnabled WRITE setSoundCuesEnabled NOTIFY settingsChanged)
+    Q_PROPERTY(int startDelaySeconds READ startDelaySeconds WRITE setStartDelaySeconds NOTIFY settingsChanged)
+    Q_PROPERTY(bool countingDown READ countingDown NOTIFY countdownChanged)
+    Q_PROPERTY(int countdownRemaining READ countdownRemaining NOTIFY countdownChanged)
+    Q_PROPERTY(bool choosingSource READ choosingSource NOTIFY stateChanged)
+    Q_PROPERTY(bool awaitingFirstFrame READ awaitingFirstFrame NOTIFY stateChanged)
     Q_PROPERTY(QVariantList recentRecordings READ recentRecordings NOTIFY recentRecordingsChanged)
 
     Q_PROPERTY(bool micMonitorEnabled READ micMonitorEnabled WRITE setMicMonitorEnabled NOTIFY micMonitorChanged)
@@ -90,6 +95,11 @@ public:
     QString outputDirectory() const { return m_outputDirectory; }
     bool captureCursor() const { return m_captureCursor; }
     bool soundCuesEnabled() const { return m_soundCuesEnabled; }
+    int startDelaySeconds() const { return m_startDelaySeconds; }
+    bool countingDown() const { return m_countdownRemaining > 0; }
+    int countdownRemaining() const { return m_countdownRemaining; }
+    bool choosingSource() const { return m_choosingSource; }
+    bool awaitingFirstFrame() const { return m_awaitingFirstFrame; }
     QVariantList recentRecordings() const { return m_recentRecordings; }
 
     bool micMonitorEnabled() const { return m_micMonitorEnabled; }
@@ -110,6 +120,7 @@ public:
     void setOutputDirectory(const QString &value);
     void setCaptureCursor(bool value);
     void setSoundCuesEnabled(bool value);
+    void setStartDelaySeconds(int value);
     void setMicMonitorEnabled(bool value);
     void setMicPlaybackEnabled(bool value);
     void setMicGain(qreal value);
@@ -121,6 +132,7 @@ public:
                                              qreal devicePixelRatio);
     Q_INVOKABLE void clearCaptureRegion();
     Q_INVOKABLE void startRecording();
+    Q_INVOKABLE void cancelCountdown();
     Q_INVOKABLE void stopRecording();
     Q_INVOKABLE void togglePause();
     Q_INVOKABLE void refreshState();
@@ -151,6 +163,7 @@ signals:
     void micLevelChanged();
     void micGainChanged();
     void recentRecordingsChanged();
+    void countdownChanged();
     void requestShow();
 
 private:
@@ -168,8 +181,16 @@ private:
     void updateRecentMenu();
     void notifyTray(const QString &title, const QString &path);
     void rememberRecentRecording(const QString &path);
+    void beginRecording();
+    void beginCountdown();
+    bool prepareCaptureSelection();
+    void abandonCaptureSelection();
+    void setPollInterval(int milliseconds);
+    void playCue(const QList<QPair<double, int>> &tones);
+    void releaseCueSink();
     void playStartCue();
     void playStopCue();
+    void playCountdownTick(bool last);
     void updateTrimProgress();
     void finishTrim(int exitCode, QProcess::ExitStatus status);
     QString trimOutputPath(const QString &source, bool motionBlur) const;
@@ -216,6 +237,13 @@ private:
     bool m_captureCursor = true;
     QString m_activeCodec = QStringLiteral("h264");
     bool m_soundCuesEnabled = true;
+    int m_startDelaySeconds = 0;
+    int m_countdownRemaining = 0;
+    QTimer *m_countdownTimer = nullptr;
+    bool m_choosingSource = false;
+    bool m_selectionReady = false;
+    bool m_awaitingFirstFrame = false;
+    bool m_startAfterSelection = false;
     QVariantList m_recentRecordings;
     QString m_lastNotificationPath;
 
@@ -233,6 +261,8 @@ private:
     QAudioSink *m_micSink = nullptr;
     QIODevice *m_micSinkStream = nullptr;
     QTimer *m_micDecayTimer = nullptr;
+    QAudioSink *m_cueSink = nullptr;
+    QIODevice *m_cueBuffer = nullptr;
     QElapsedTimer m_micPeakAge;
 
     QTimer *m_pollTimer = nullptr;

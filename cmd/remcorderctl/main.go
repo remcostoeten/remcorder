@@ -27,7 +27,7 @@ func main() {
 	openFile := flag.Bool("open", false, "open the recording with the default application once it stops")
 	openDir := flag.Bool("open-dir", false, "open the recording's folder once it stops")
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [options] <status|start|stop|toggle|pause|resume|toggle-pause>\n\n", os.Args[0])
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [options] <status|start|stop|toggle|pause|resume|toggle-pause|prepare-selection|cancel-selection>\n\n", os.Args[0])
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -41,7 +41,7 @@ func main() {
 		action = control.Action(strings.ToLower(flag.Arg(0)))
 	}
 	if !action.Valid() {
-		exitError(fmt.Errorf("unknown command %q (expected status, start, stop, toggle, pause, resume, or toggle-pause)", action))
+		exitError(fmt.Errorf("unknown command %q (expected status, start, stop, toggle, pause, resume, toggle-pause, prepare-selection, or cancel-selection)", action))
 	}
 
 	if action == control.ActionStart && *delay > 0 {

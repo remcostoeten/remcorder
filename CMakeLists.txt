@@ -24,14 +24,35 @@ qt_add_executable(remcorder
     app/Branding.h
     app/RecorderBackend.cpp
     app/RecorderBackend.h
+    app/TrimPreview.cpp
+    app/TrimPreview.h
     app/WindowChrome.h
 )
+
+set_source_files_properties(app/qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
 qt_add_qml_module(remcorder
     URI Remcorder
     VERSION 1.0
     QML_FILES
+        app/qml/Theme.qml
+        app/qml/Glyph.qml
+        app/qml/Card.qml
+        app/qml/Chip.qml
+        app/qml/Popover.qml
+        app/qml/GhostButton.qml
+        app/qml/PrimaryButton.qml
+        app/qml/WindowButton.qml
+        app/qml/PillButton.qml
+        app/qml/Segmented.qml
+        app/qml/ModernSwitch.qml
+        app/qml/DeviceCombo.qml
+        app/qml/LevelMeter.qml
+        app/qml/RecordingPill.qml
+        app/qml/LibrarySheet.qml
+        app/qml/TrimWindow.qml
         app/qml/Main.qml
+        app/qml/RegionSelector.qml
 )
 
 qt_add_resources(remcorder "branding"

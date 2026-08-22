@@ -209,6 +209,10 @@ func handle(conn net.Conn, engine *recorder.Recorder) {
 		} else {
 			state, err = engine.Pause()
 		}
+	case control.ActionPrepare:
+		state, err = engine.PrepareSelection()
+	case control.ActionCancelPrep:
+		state, err = engine.CancelSelection()
 	default:
 		err = fmt.Errorf("unknown action %q", request.Action)
 		state = engine.State()
