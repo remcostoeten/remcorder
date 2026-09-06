@@ -1,0 +1,81 @@
+[Remcorder Keystrokes]
+Description=Remcorder keystroke strip
+above=true
+aboverule=2
+clientmachine=localhost
+desktopsrule=2
+position=1000,1250
+positionrule=4
+skippager=true
+skippagerrule=2
+skipswitcher=true
+skipswitcherrule=2
+skiptaskbar=true
+skiptaskbarrule=2
+title=Remcorder Keystrokes
+titlematch=1
+types=1
+wmclass=qml6 qml
+wmclasscomplete=false
+wmclassmatch=0
+
+[Remcorder Overlay]
+Description=Remcorder recording indicator
+above=true
+aboverule=2
+clientmachine=localhost
+desktopsrule=2
+position=2280,60
+positionrule=4
+skippager=true
+skippagerrule=2
+skipswitcher=true
+skipswitcherrule=2
+skiptaskbar=true
+skiptaskbarrule=2
+title=Remcorder Overlay
+titlematch=1
+types=1
+wmclass=qml6 qml
+wmclasscomplete=false
+wmclassmatch=0
+
+[Remcorder Recording]
+Description=Remcorder recording pill
+above=true
+aboverule=2
+clientmachine=localhost
+desktopsrule=2
+position=1000,1320
+positionrule=4
+skippager=true
+skippagerrule=2
+skipswitcher=true
+skipswitcherrule=2
+skiptaskbar=true
+skiptaskbarrule=2
+title=Remcorder Recording
+titlematch=1
+types=1
+wmclassmatch=0
+
+[Remcorder Webcam]
+Description=Remcorder webcam bubble
+above=true
+aboverule=2
+clientmachine=localhost
+desktopsrule=2
+skippager=true
+skippagerrule=2
+skipswitcher=true
+skipswitcherrule=2
+skiptaskbar=true
+skiptaskbarrule=2
+title=Remcorder Webcam
+titlematch=1
+types=1
+wmclassmatch=0
+
+[General]
+count=4
+rules=Remcorder Keystrokes,Remcorder Overlay,Remcorder Recording,Remcorder Webcam

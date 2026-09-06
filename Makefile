@@ -19,6 +19,7 @@ check:
 	cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 	cmake --build build
 	qmllint app/qml/Main.qml app/qml/RegionSelector.qml
+	qmllint overlay/main.qml overlay/KeystrokeOverlay.qml
 
 install: check
 	install -d "$(PREFIX)/bin"
@@ -27,6 +28,8 @@ install: check
 	install -Dm755 build/remcorder "$(PREFIX)/bin/remcorder"
 	install -Dm755 scripts/remcorder-overlay "$(PREFIX)/bin/remcorder-overlay"
 	install -Dm644 overlay/main.qml "$(PREFIX)/share/remcorder/overlay/main.qml"
+	install -Dm644 overlay/KeystrokeOverlay.qml "$(PREFIX)/share/remcorder/overlay/KeystrokeOverlay.qml"
+	install -Dm644 packaging/kwin/remcorder-overlay.kwinrule "$(PREFIX)/share/remcorder/kwin/remcorder-overlay.kwinrule"
 	install -Dm644 packaging/remcorder.desktop "$(PREFIX)/share/applications/remcorder.desktop"
 	for size in $(ICON_SIZES); do \
 		install -Dm644 "packaging/icons/remcorder-$$size.png" \

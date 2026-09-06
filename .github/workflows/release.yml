@@ -17,7 +17,7 @@ jobs:
         run: |
           pacman -Syu --noconfirm --needed \
             git cmake go fakeroot binutils \
-            qt6-base qt6-declarative qt6-multimedia gpu-screen-recorder systemd
+            qt6-base qt6-declarative qt6-multimedia layer-shell-qt gpu-screen-recorder systemd
 
       - uses: actions/checkout@v5
 
@@ -59,9 +59,16 @@ jobs:
         run: |
           echo "path=$(find packaging/pkgbuild -maxdepth 1 -name '*.pkg.tar.zst')" >> "$GITHUB_OUTPUT"
 
+      - name: Generate checksums
+        working-directory: packaging/pkgbuild
+        run: sha256sum -- *.pkg.tar.zst remcorder-*.tar.gz PKGBUILD > SHA256SUMS
+
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v3
         with:
+          fail_on_unmatched_files: true
           files: |
             ${{ steps.artifact.outputs.path }}
             packaging/pkgbuild/PKGBUILD
+            packaging/pkgbuild/remcorder-${{ steps.version.outputs.version }}.tar.gz
+            packaging/pkgbuild/SHA256SUMS

@@ -32,6 +32,30 @@ Rectangle {
     Behavior on color { ColorAnimation { duration: 140 } }
     Behavior on border.color { ColorAnimation { duration: 140 } }
 
+    activeFocusOnTab: true
+    Accessible.role: checkable ? Accessible.CheckBox : Accessible.Button
+    Accessible.checkable: checkable
+    Accessible.checked: lit
+
+    function activate() {
+        if (checkable)
+            toggled()
+        else if (hasMenu)
+            menuRequested()
+    }
+
+    Keys.onSpacePressed: activate()
+    Keys.onReturnPressed: activate()
+    Keys.onEnterPressed: activate()
+    Keys.onDownPressed: event => {
+        if (hasMenu) {
+            menuRequested()
+            event.accepted = true
+        }
+    }
+
+    FocusRing {}
+
     Rectangle {
         anchors.left: parent.left
         anchors.right: parent.right
@@ -95,14 +119,7 @@ Rectangle {
         }
 
         HoverHandler { id: bodyHover; cursorShape: Qt.PointingHandCursor }
-        TapHandler {
-            onTapped: {
-                if (chip.checkable)
-                    chip.toggled()
-                else if (chip.hasMenu)
-                    chip.menuRequested()
-            }
-        }
+        TapHandler { onTapped: chip.activate() }
     }
 
     Rectangle {
@@ -138,7 +155,4 @@ Rectangle {
         HoverHandler { id: menuHover; cursorShape: Qt.PointingHandCursor }
         TapHandler { onTapped: chip.menuRequested() }
     }
-
-    scale: bodyHover.hovered || menuHover.hovered ? 1.015 : 1
-    Behavior on scale { NumberAnimation { duration: 130; easing.type: Easing.OutCubic } }
 }

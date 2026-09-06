@@ -68,10 +68,14 @@ Item {
             readonly property real localY: selector.selectionY - modelData.virtualY
 
             screen: modelData
+            x: modelData.virtualX
+            y: modelData.virtualY
+            width: modelData.width
+            height: modelData.height
             visible: true
-            visibility: Window.FullScreen
             color: "transparent"
             title: "Select a capture region"
+            transientParent: null
             flags: Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool
 
             Component.onCompleted: requestActivate()

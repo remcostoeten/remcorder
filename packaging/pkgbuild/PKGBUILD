@@ -6,10 +6,10 @@ pkgdesc="Native control center and background service for GPU-accelerated screen
 arch=('x86_64')
 url="https://github.com/remcostoeten/remcorder"
 license=('MIT')
-depends=('qt6-base' 'qt6-declarative' 'qt6-multimedia' 'gpu-screen-recorder' 'systemd')
+depends=('qt6-base' 'qt6-declarative' 'qt6-multimedia' 'layer-shell-qt' 'gpu-screen-recorder' 'systemd')
 optdepends=('ffmpeg: trim export and motion blur'
             'libpulse: microphone meter and gain control')
-makedepends=('cmake' 'go' 'qt6-declarative')
+makedepends=('cmake' 'go' 'qt6-declarative' 'layer-shell-qt')
 source=("remcorder-$pkgver.tar.gz")
 sha256sums=('SKIP')
 options=('!debug')
@@ -42,6 +42,10 @@ package() {
 
   install -Dm644 overlay/main.qml \
     "$pkgdir/usr/share/remcorder/overlay/main.qml"
+  install -Dm644 overlay/KeystrokeOverlay.qml \
+    "$pkgdir/usr/share/remcorder/overlay/KeystrokeOverlay.qml"
+  install -Dm644 packaging/kwin/remcorder-overlay.kwinrule \
+    "$pkgdir/usr/share/remcorder/kwin/remcorder-overlay.kwinrule"
   install -Dm644 packaging/remcorder.desktop \
     "$pkgdir/usr/share/applications/remcorder.desktop"
   for size in 16 24 32 48 64 128 256 512; do

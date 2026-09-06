@@ -46,4 +46,10 @@ if [ "${1:-}" = "--which" ]; then
 fi
 
 state="${1:-${XDG_RUNTIME_DIR:-/tmp}/remcorder/state.json}"
+
+# Qt 6 refuses XMLHttpRequest reads of file:// URLs unless this is set, and the
+# overlay has no other way to reach the daemon's state snapshot.
+QML_XHR_ALLOW_FILE_READ=1
+export QML_XHR_ALLOW_FILE_READ
+
 exec "$(find_runner)" "$(find_overlay)" -- "$state"

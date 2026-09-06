@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/remcostoeten/remcorder/internal/control"
+	"github.com/remcostoeten/remcorder/internal/keystrokes"
 	"github.com/remcostoeten/remcorder/internal/recorder"
 )
 
@@ -44,12 +45,22 @@ func main() {
 		codec      = flag.String("codec", "h264", "video codec")
 		quality    = flag.String("quality", "very_high", "recording quality")
 		cursor     = flag.Bool("cursor", true, "include the pointer in recordings")
-		stateFile  string
+
+		showKeys  = flag.Bool("keystrokes", false, "publish pressed keys by default; the app can override this per recording")
+		keysHold  = flag.Float64("keystroke-hold", 2.5, "seconds a keystroke stays on screen after the last press")
+		keysLimit = flag.Int("keystroke-limit", 12, "maximum number of keystrokes shown side by side")
+
+		stateFile string
+		keysFile  string
 	)
 	flag.StringVar(&stateFile, "state-file", "", "JSON state snapshot path (defaults beside the socket)")
+	flag.StringVar(&keysFile, "keystroke-file", "", "JSON keystroke snapshot path (defaults beside the socket)")
 	flag.Parse()
 	if stateFile == "" {
 		stateFile = filepath.Join(filepath.Dir(*socketPath), "state.json")
+	}
+	if keysFile == "" {
+		keysFile = filepath.Join(filepath.Dir(*socketPath), "keys.json")
 	}
 
 	engine, err := recorder.New(recorder.Config{
@@ -61,6 +72,8 @@ func main() {
 		Codec:           *codec,
 		Quality:         *quality,
 		Cursor:          *cursor,
+		Keystrokes:      *showKeys,
+		KeystrokeHold:   *keysHold,
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -69,10 +82,33 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	monitor := keystrokes.NewMonitor(
+		keystrokes.Config{
+			Hold:      time.Duration(*keysHold * float64(time.Second)),
+			MaxTokens: *keysLimit,
+		},
+		func(snapshot keystrokes.Snapshot) {
+			if err := publishJSON(keysFile, snapshot); err != nil {
+				log.Printf("publish keystrokes: %v", err)
+			}
+		},
+	)
+	keys := newKeystrokeSwitch(monitor, func(err error) {
+		log.Printf("keystroke overlay unavailable: %v", err)
+	})
+	defer keys.close()
+	if *showKeys {
+		reportKeyboards()
+	}
+
 	engine.SetStateListener(func(state recorder.State) {
-		if err := publishState(stateFile, state); err != nil {
+		if err := publishJSON(stateFile, state); err != nil {
 			log.Printf("publish state: %v", err)
 		}
+		if state.Keystrokes {
+			monitor.SetHold(time.Duration(state.KeystrokeHold * float64(time.Second)))
+		}
+		keys.set(state.Recording && !state.Paused && state.Keystrokes)
 	})
 	defer func() {
 		_ = listener.Close()
@@ -114,11 +150,28 @@ func main() {
 	clients.Wait()
 }
 
-func publishState(path string, state recorder.State) error {
+func reportKeyboards() {
+	devices, err := keystrokes.DiscoverKeyboards()
+	if err != nil {
+		log.Printf("keystroke overlay: %v", err)
+		return
+	}
+	if len(devices) == 0 {
+		log.Print("keystroke overlay: no keyboards visible; add your user to the \"input\" group")
+		return
+	}
+	names := make([]string, 0, len(devices))
+	for _, device := range devices {
+		names = append(names, device.Name)
+	}
+	log.Printf("keystroke overlay watching %d keyboard(s): %s", len(devices), strings.Join(names, ", "))
+}
+
+func publishJSON(path string, payload any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	data, err := json.Marshal(state)
+	data, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
@@ -191,6 +244,17 @@ func handle(conn net.Conn, engine *recorder.Recorder) {
 		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 		state, err = engine.Stop(ctx)
 		cancel()
+	case control.ActionKeystrokes:
+		enabled := request.Options.Keystrokes != nil && *request.Options.Keystrokes
+		hold := 0.0
+		if request.Options.KeystrokeHold != nil {
+			hold = *request.Options.KeystrokeHold
+		}
+		state = engine.SetKeystrokes(enabled, hold)
+	case control.ActionDiscard:
+		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+		state, err = engine.Discard(ctx)
+		cancel()
 	case control.ActionToggle:
 		if engine.State().Recording {
 			ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
@@ -213,6 +277,8 @@ func handle(conn net.Conn, engine *recorder.Recorder) {
 		state, err = engine.PrepareSelection()
 	case control.ActionCancelPrep:
 		state, err = engine.CancelSelection()
+	case control.ActionRename:
+		state, err = engine.Rename(request.Path)
 	default:
 		err = fmt.Errorf("unknown action %q", request.Action)
 		state = engine.State()

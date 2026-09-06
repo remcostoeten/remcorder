@@ -7,6 +7,7 @@
 #include <QProcess>
 #include <QSystemTrayIcon>
 #include <QVariantList>
+#include <QVariantMap>
 
 class QAction;
 class QAudioSink;
@@ -47,6 +48,20 @@ class RecorderBackend final : public QObject
     Q_PROPERTY(QString outputDirectory READ outputDirectory WRITE setOutputDirectory NOTIFY settingsChanged)
     Q_PROPERTY(bool captureCursor READ captureCursor WRITE setCaptureCursor NOTIFY settingsChanged)
     Q_PROPERTY(bool soundCuesEnabled READ soundCuesEnabled WRITE setSoundCuesEnabled NOTIFY settingsChanged)
+    Q_PROPERTY(bool showKeystrokes READ showKeystrokes WRITE setShowKeystrokes NOTIFY settingsChanged)
+    Q_PROPERTY(double keystrokeHoldSeconds READ keystrokeHoldSeconds WRITE setKeystrokeHoldSeconds NOTIFY settingsChanged)
+    Q_PROPERTY(QString keystrokePlacement READ keystrokePlacement WRITE setKeystrokePlacement NOTIFY settingsChanged)
+    Q_PROPERTY(QVariantList keystrokeTokens READ keystrokeTokens NOTIFY keystrokesChanged)
+    Q_PROPERTY(bool keystrokesVisible READ keystrokesVisible NOTIFY keystrokesChanged)
+    Q_PROPERTY(QString keystrokeError READ keystrokeError NOTIFY keystrokesChanged)
+    Q_PROPERTY(bool highlightClicks READ highlightClicks WRITE setHighlightClicks NOTIFY settingsChanged)
+    Q_PROPERTY(bool clickHighlightSupported READ clickHighlightSupported CONSTANT)
+    Q_PROPERTY(bool webcamEnabled READ webcamEnabled WRITE setWebcamEnabled NOTIFY settingsChanged)
+    Q_PROPERTY(QString webcamShape READ webcamShape WRITE setWebcamShape NOTIFY settingsChanged)
+    Q_PROPERTY(QString webcamCorner READ webcamCorner WRITE setWebcamCorner NOTIFY settingsChanged)
+    Q_PROPERTY(QString webcamSize READ webcamSize WRITE setWebcamSize NOTIFY settingsChanged)
+    Q_PROPERTY(QString webcamDevice READ webcamDevice WRITE setWebcamDevice NOTIFY settingsChanged)
+    Q_PROPERTY(bool webcamMirrored READ webcamMirrored WRITE setWebcamMirrored NOTIFY settingsChanged)
     Q_PROPERTY(int startDelaySeconds READ startDelaySeconds WRITE setStartDelaySeconds NOTIFY settingsChanged)
     Q_PROPERTY(bool countingDown READ countingDown NOTIFY countdownChanged)
     Q_PROPERTY(int countdownRemaining READ countdownRemaining NOTIFY countdownChanged)
@@ -95,6 +110,30 @@ public:
     QString outputDirectory() const { return m_outputDirectory; }
     bool captureCursor() const { return m_captureCursor; }
     bool soundCuesEnabled() const { return m_soundCuesEnabled; }
+    bool showKeystrokes() const { return m_showKeystrokes; }
+    QVariantList keystrokeTokens() const { return m_keystrokeTokens; }
+    bool keystrokesVisible() const { return m_keystrokesVisible; }
+    QString keystrokeError() const { return m_keystrokeError; }
+    void setShowKeystrokes(bool value);
+    double keystrokeHoldSeconds() const { return m_keystrokeHoldSeconds; }
+    void setKeystrokeHoldSeconds(double value);
+    QString keystrokePlacement() const { return m_keystrokePlacement; }
+    void setKeystrokePlacement(const QString &value);
+    bool highlightClicks() const { return m_highlightClicks; }
+    void setHighlightClicks(bool value);
+    bool clickHighlightSupported() const;
+    bool webcamEnabled() const { return m_webcamEnabled; }
+    void setWebcamEnabled(bool value);
+    QString webcamShape() const { return m_webcamShape; }
+    void setWebcamShape(const QString &value);
+    QString webcamCorner() const { return m_webcamCorner; }
+    void setWebcamCorner(const QString &value);
+    QString webcamSize() const { return m_webcamSize; }
+    void setWebcamSize(const QString &value);
+    QString webcamDevice() const { return m_webcamDevice; }
+    void setWebcamDevice(const QString &value);
+    bool webcamMirrored() const { return m_webcamMirrored; }
+    void setWebcamMirrored(bool value);
     int startDelaySeconds() const { return m_startDelaySeconds; }
     bool countingDown() const { return m_countdownRemaining > 0; }
     int countdownRemaining() const { return m_countdownRemaining; }
@@ -134,6 +173,7 @@ public:
     Q_INVOKABLE void startRecording();
     Q_INVOKABLE void cancelCountdown();
     Q_INVOKABLE void stopRecording();
+    Q_INVOKABLE void discardRecording();
     Q_INVOKABLE void togglePause();
     Q_INVOKABLE void refreshState();
     Q_INVOKABLE void refreshDevices();
@@ -151,6 +191,11 @@ public:
     Q_INVOKABLE QString formatDuration(qint64 seconds) const;
     Q_INVOKABLE void copyLastOutputPath();
     Q_INVOKABLE void openRecentRecording(const QString &path);
+    Q_INVOKABLE void revealRecording(const QString &path);
+    Q_INVOKABLE void revealLastRecording();
+    Q_INVOKABLE QString renameLastRecording(const QString &name);
+    Q_INVOKABLE QVariantMap recordingInfo(const QString &path) const;
+    Q_INVOKABLE QString formatBytes(qint64 bytes) const;
 
 signals:
     void stateChanged();
@@ -164,7 +209,9 @@ signals:
     void micGainChanged();
     void recentRecordingsChanged();
     void countdownChanged();
+    void keystrokesChanged();
     void requestShow();
+    void recordingSaved(const QString &path);
 
 private:
     bool request(const QJsonObject &payload,
@@ -190,12 +237,22 @@ private:
     void releaseCueSink();
     void playStartCue();
     void playStopCue();
+    void playDiscardCue();
     void playCountdownTick(bool last);
     void updateTrimProgress();
     void finishTrim(int exitCode, QProcess::ExitStatus status);
     QString trimOutputPath(const QString &source, bool motionBlur) const;
     QStringList videoEncoderOptions(QString *encoder) const;
     QString socketPath() const;
+    QString keystrokePath() const;
+    void syncKeystrokePolling();
+    void syncClickHighlight();
+    bool clickEffectArmed() const;
+    void armClickEffect(bool armed);
+    void seedClickEffectDefaults() const;
+    void pushKeystrokeOptions();
+    void pollKeystrokes();
+    void clearKeystrokes();
     QVariantList discover(const QString &argument, bool inputs) const;
     void syncMicMonitor();
     void startMicMonitor();
@@ -237,6 +294,26 @@ private:
     bool m_captureCursor = true;
     QString m_activeCodec = QStringLiteral("h264");
     bool m_soundCuesEnabled = true;
+    bool m_showKeystrokes = false;
+    double m_keystrokeHoldSeconds = 2.5;
+    QString m_keystrokePlacement = QStringLiteral("pill");
+    qint64 m_keystrokeCutoffId = 0;
+    QVariantList m_keystrokeTokens;
+    bool m_keystrokesVisible = false;
+    QString m_keystrokeError;
+    QByteArray m_keystrokeRaw;
+    qint64 m_keystrokeUpdatedMs = 0;
+    int m_keystrokeHoldMs = 2500;
+    QTimer *m_keystrokeTimer = nullptr;
+    bool m_highlightClicks = false;
+    bool m_clickEffectLoadedHere = false;
+    bool m_clickHighlightActive = false;
+    bool m_webcamEnabled = false;
+    QString m_webcamShape = QStringLiteral("circle");
+    QString m_webcamCorner = QStringLiteral("bottomRight");
+    QString m_webcamSize = QStringLiteral("medium");
+    QString m_webcamDevice;
+    bool m_webcamMirrored = true;
     int m_startDelaySeconds = 0;
     int m_countdownRemaining = 0;
     QTimer *m_countdownTimer = nullptr;
@@ -272,7 +349,10 @@ private:
     QAction *m_recordAction = nullptr;
     QAction *m_pauseAction = nullptr;
     QAction *m_stopAction = nullptr;
+    QAction *m_discardAction = nullptr;
+    QAction *m_keystrokesAction = nullptr;
     QAction *m_openAction = nullptr;
+    QAction *m_revealAction = nullptr;
     QAction *m_openTrimAction = nullptr;
     QAction *m_copyPathAction = nullptr;
     QMenu *m_recentMenu = nullptr;

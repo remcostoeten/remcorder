@@ -1,0 +1,29 @@
+name: Bug report
+description: Something isn't working as expected.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include capture mode and audio or overlay settings if relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Your setup
+      description: Remcorder version, installation method, distro, GPU and driver, desktop/compositor, and Wayland or X11.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Logs or screenshots
+      description: "Optional: remcorderctl --json status and journalctl --user -u remcorder.service -b --no-pager -n 100. Remove private paths and captured keystrokes before sharing."

@@ -18,18 +18,21 @@ const (
 	ActionStatus      Action = "status"
 	ActionStart       Action = "start"
 	ActionStop        Action = "stop"
+	ActionDiscard     Action = "discard"
+	ActionKeystrokes  Action = "keystrokes"
 	ActionToggle      Action = "toggle"
 	ActionPause       Action = "pause"
 	ActionResume      Action = "resume"
 	ActionTogglePause Action = "toggle-pause"
 	ActionPrepare     Action = "prepare-selection"
 	ActionCancelPrep  Action = "cancel-selection"
+	ActionRename      Action = "rename"
 )
 
 func (action Action) Valid() bool {
 	switch action {
-	case ActionStatus, ActionStart, ActionStop, ActionToggle, ActionPause, ActionResume, ActionTogglePause,
-		ActionPrepare, ActionCancelPrep:
+	case ActionStatus, ActionStart, ActionStop, ActionDiscard, ActionKeystrokes, ActionToggle, ActionPause, ActionResume, ActionTogglePause,
+		ActionPrepare, ActionCancelPrep, ActionRename:
 		return true
 	default:
 		return false
@@ -39,6 +42,7 @@ func (action Action) Valid() bool {
 type Request struct {
 	Action  Action                `json:"action"`
 	Options recorder.StartOptions `json:"options,omitempty"`
+	Path    string                `json:"path,omitempty"`
 }
 
 type Response struct {

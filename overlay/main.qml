@@ -1,8 +1,21 @@
 import QtQuick
 import QtQuick.Window
+import org.kde.layershell as LayerShell
 
+// Wayland compositors ignore WindowStaysOnTopHint, so the indicator is a
+// layer-shell overlay surface: always above other windows, placed by the
+// compositor from anchors and margins rather than x/y. On X11 the attached
+// properties are inert and the window flags below do the job.
 Window {
     id: root
+
+    LayerShell.Window.layer: LayerShell.Window.LayerOverlay
+    LayerShell.Window.anchors: LayerShell.Window.AnchorTop | LayerShell.Window.AnchorRight
+    LayerShell.Window.margins.top: 60
+    LayerShell.Window.margins.right: 40
+    LayerShell.Window.exclusionZone: 0
+    LayerShell.Window.keyboardInteractivity: LayerShell.Window.KeyboardInteractivityNone
+    LayerShell.Window.scope: "remcorder-overlay"
 
     property bool recording: false
     property bool paused: false
@@ -17,6 +30,7 @@ Window {
     width: 202
     height: 54
     visible: recording
+    title: "Remcorder Overlay"
     color: "transparent"
     flags: Qt.FramelessWindowHint
          | Qt.WindowStaysOnTopHint
@@ -73,6 +87,10 @@ Window {
     }
 
     Component.onCompleted: readState()
+
+    KeystrokeOverlay {
+        statePath: root.statePath
+    }
 
     Timer {
         interval: 250

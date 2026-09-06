@@ -7,11 +7,12 @@ Button {
     property color hoverFill: Theme.surfaceHi
     property color hoverInk: Theme.ink
     property string glyph: ""
+    property bool tabbable: false
 
     implicitWidth: 28
     implicitHeight: 28
     hoverEnabled: true
-    focusPolicy: Qt.NoFocus
+    focusPolicy: tabbable ? Qt.TabFocus : Qt.NoFocus
 
     contentItem: Item {
         Glyph {
@@ -30,6 +31,9 @@ Button {
         color: chromeButton.down
             ? Qt.darker(chromeButton.hoverFill, 1.2)
             : chromeButton.hovered ? chromeButton.hoverFill : "transparent"
+
+        border.width: chromeButton.activeFocus ? 2 : 0
+        border.color: Theme.focusInk
 
         Behavior on color { ColorAnimation { duration: 120 } }
     }

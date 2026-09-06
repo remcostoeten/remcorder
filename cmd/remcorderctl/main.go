@@ -27,21 +27,27 @@ func main() {
 	openFile := flag.Bool("open", false, "open the recording with the default application once it stops")
 	openDir := flag.Bool("open-dir", false, "open the recording's folder once it stops")
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [options] <status|start|stop|toggle|pause|resume|toggle-pause|prepare-selection|cancel-selection>\n\n", os.Args[0])
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [options] <status|start|stop|discard|toggle|pause|resume|toggle-pause|prepare-selection|cancel-selection|rename <new-name>>\n\n", os.Args[0])
 		flag.PrintDefaults()
 	}
 	flag.Parse()
 
 	action := control.ActionStatus
-	if flag.NArg() > 1 {
-		flag.Usage()
-		os.Exit(2)
-	}
-	if flag.NArg() == 1 {
+	if flag.NArg() >= 1 {
 		action = control.Action(strings.ToLower(flag.Arg(0)))
 	}
 	if !action.Valid() {
-		exitError(fmt.Errorf("unknown command %q (expected status, start, stop, toggle, pause, resume, toggle-pause, prepare-selection, or cancel-selection)", action))
+		exitError(fmt.Errorf("unknown command %q (expected status, start, stop, discard, toggle, pause, resume, toggle-pause, prepare-selection, cancel-selection, or rename)", action))
+	}
+	renameTarget := ""
+	if action == control.ActionRename {
+		if flag.NArg() != 2 {
+			exitError(errors.New("rename expects exactly one argument: the new file name or path"))
+		}
+		renameTarget = flag.Arg(1)
+	} else if flag.NArg() > 1 {
+		flag.Usage()
+		os.Exit(2)
 	}
 
 	if action == control.ActionStart && *delay > 0 {
@@ -49,7 +55,7 @@ func main() {
 		time.Sleep(*delay)
 	}
 
-	response, err := control.Call(*socketPath, control.Request{Action: action}, *timeout)
+	response, err := control.Call(*socketPath, control.Request{Action: action, Path: renameTarget}, *timeout)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			exitError(fmt.Errorf("remcorder daemon is not running (socket %s is missing)", *socketPath))

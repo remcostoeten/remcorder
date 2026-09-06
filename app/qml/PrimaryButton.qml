@@ -60,8 +60,10 @@ Button {
                     ? Qt.darker(primary.tint, 1.2)
                     : primary.hovered ? Qt.lighter(primary.tint, 1.12) : primary.tint)
                 : Theme.surfaceHi
-            border.width: 1
-            border.color: primary.enabled ? Qt.lighter(primary.tint, 1.3) : Theme.stroke
+            border.width: primary.activeFocus ? 2 : 1
+            border.color: primary.activeFocus
+                ? Theme.ink
+                : primary.enabled ? Qt.lighter(primary.tint, 1.3) : Theme.stroke
 
             Rectangle {
                 anchors.left: parent.left

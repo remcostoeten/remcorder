@@ -24,9 +24,11 @@ YAML             GitHub Actions CI/release.
 --------------------------------------------------------------------------------
 2. FRAMEWORKS & LIBRARIES
 --------------------------------------------------------------------------------
-Qt 6.5+          Core, Gui, Qml, Quick, QuickControls2, Multimedia, Network,
+Qt 6.5+          Core, DBus, Gui, Qml, Quick, QuickControls2, Multimedia, Network,
                  Widgets. Multimedia drives the trim preview; Widgets provides
                  the system tray; QSettings persists per-user config.
+LayerShellQt     wlr-layer-shell surfaces for the recording pill, keystroke strip
+                 and standalone overlay so Wayland keeps them above all windows.
 Go stdlib        net (Unix sockets), encoding/json, os/exec, syscall,
                  context, flag, sync.
 systemd (user)   Two units bound to graphical-session.target, Restart=on-failure.
@@ -70,6 +72,15 @@ STATE PLANE (one-way, read-only for consumers)
   The daemon atomically rewrites a JSON snapshot in the runtime dir on every
   state change. The overlay polls that file and never sends commands, so the
   indicator can crash, restart, or be absent without touching a recording.
+  With -keystrokes it publishes a second snapshot, keys.json, on the same
+  terms. Qt refuses XMLHttpRequest reads of file:// unless
+  QML_XHR_ALLOW_FILE_READ=1, which scripts/remcorder-overlay exports.
+
+KEYSTROKE PLANE (internal/keystrokes, opt-in)
+  Wayland gives no client the global key events a screencast overlay needs, so
+  the daemon reads /dev/input evdev nodes directly, filtered by their EV_KEY
+  capability bitmap rather than by name. Devices are opened only while a
+  recording runs and closed on stop or pause; nothing is persisted.
 
 RECORDER ENGINE (internal/recorder)
   Wraps gpu-screen-recorder as a child process group. Pause/resume via signals
@@ -97,8 +108,11 @@ remcorder/
 │   └── remcorderctl/main.go  CLI client (--json, --delay, --open, --open-dir)
 ├── internal/
 │   ├── recorder/             capture engine + lifecycle (has unit tests)
+│   ├── keystrokes/           evdev reader + chord folding (has unit tests)
 │   └── control/              socket path resolution + request/response types
-├── overlay/main.qml          click-through "recording" indicator
+├── overlay/
+│   ├── main.qml              click-through "recording" indicator
+│   └── KeystrokeOverlay.qml  click-through keystroke chips (opt-in)
 ├── scripts/
 │   ├── pre-reqs.sh           distro-aware dependency installer
 │   ├── packages.conf         package routes: arch/debian/fedora/suse families
@@ -106,6 +120,7 @@ remcorder/
 ├── systemd/                  remcorder.service, remcorder-overlay.service
 ├── packaging/
 │   ├── *.desktop, *.svg      app entry, tray autostart entry, icon
+│   ├── kwin/                 window rules pinning the overlays on KWin
 │   └── pkgbuild/PKGBUILD     Arch package (installs to /usr, rewrites units)
 ├── .github/workflows/        ci.yml, release.yml
 ├── CMakeLists.txt            Qt/C++ build

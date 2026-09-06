@@ -32,6 +32,7 @@ var (
 	ErrNotPaused        = errors.New("the recording is not paused")
 	ErrAlreadySelecting = errors.New("a capture picker is already open")
 	ErrSelectionAborted = errors.New("the capture selection was cancelled")
+	ErrNothingToRename  = errors.New("there is no finished recording to rename")
 )
 
 type Config struct {
@@ -44,33 +45,39 @@ type Config struct {
 	Quality              string
 	Cursor               bool
 	RestorePortalSession bool
+	Keystrokes           bool
+	KeystrokeHold        float64
 }
 
 type StartOptions struct {
-	OutputDirectory      string  `json:"output_directory,omitempty"`
-	Capture              string  `json:"capture,omitempty"`
-	Region               string  `json:"region,omitempty"`
-	FPS                  int     `json:"fps,omitempty"`
-	Audio                *string `json:"audio,omitempty"`
-	Codec                string  `json:"codec,omitempty"`
-	Quality              string  `json:"quality,omitempty"`
-	Cursor               *bool   `json:"cursor,omitempty"`
-	RestorePortalSession *bool   `json:"restore_portal_session,omitempty"`
+	OutputDirectory      string   `json:"output_directory,omitempty"`
+	Capture              string   `json:"capture,omitempty"`
+	Region               string   `json:"region,omitempty"`
+	FPS                  int      `json:"fps,omitempty"`
+	Audio                *string  `json:"audio,omitempty"`
+	Codec                string   `json:"codec,omitempty"`
+	Quality              string   `json:"quality,omitempty"`
+	Cursor               *bool    `json:"cursor,omitempty"`
+	RestorePortalSession *bool    `json:"restore_portal_session,omitempty"`
+	Keystrokes           *bool    `json:"keystrokes,omitempty"`
+	KeystrokeHold        *float64 `json:"keystroke_hold,omitempty"`
 }
 
 type State struct {
-	Recording          bool   `json:"recording"`
-	Paused             bool   `json:"paused"`
-	StartedAt          string `json:"started_at,omitempty"`
-	ObservedAt         string `json:"observed_at"`
-	DurationSeconds    int64  `json:"duration_seconds"`
-	OutputFile         string `json:"output_file,omitempty"`
-	LastOutputFile     string `json:"last_output_file,omitempty"`
-	PID                int    `json:"pid,omitempty"`
-	LastError          string `json:"last_error,omitempty"`
-	AwaitingFirstFrame bool   `json:"awaiting_first_frame"`
-	Selecting          bool   `json:"selecting"`
-	SelectionReady     bool   `json:"selection_ready"`
+	Recording          bool    `json:"recording"`
+	Paused             bool    `json:"paused"`
+	StartedAt          string  `json:"started_at,omitempty"`
+	ObservedAt         string  `json:"observed_at"`
+	DurationSeconds    int64   `json:"duration_seconds"`
+	OutputFile         string  `json:"output_file,omitempty"`
+	LastOutputFile     string  `json:"last_output_file,omitempty"`
+	PID                int     `json:"pid,omitempty"`
+	LastError          string  `json:"last_error,omitempty"`
+	AwaitingFirstFrame bool    `json:"awaiting_first_frame"`
+	Keystrokes         bool    `json:"keystrokes"`
+	KeystrokeHold      float64 `json:"keystroke_hold,omitempty"`
+	Selecting          bool    `json:"selecting"`
+	SelectionReady     bool    `json:"selection_ready"`
 }
 
 type Recorder struct {
@@ -89,6 +96,9 @@ type Recorder struct {
 	lastOutput         string
 	lastError          string
 	stopping           bool
+	discarding         bool
+	keystrokes         bool
+	keystrokeHold      float64
 	stderr             bytes.Buffer
 	stateListener      func(State)
 	selectCmd          *exec.Cmd
@@ -179,6 +189,8 @@ func (r *Recorder) StartWithOptions(options StartOptions) (State, error) {
 	r.startedAt = now
 	r.awaitingFirstFrame = r.firstFrameSupport
 	r.output = output
+	r.keystrokes = config.Keystrokes
+	r.keystrokeHold = config.KeystrokeHold
 	r.lastError = ""
 	r.stopping = false
 	r.paused = false
@@ -254,6 +266,12 @@ func applyOptions(config Config, options StartOptions) Config {
 	if options.RestorePortalSession != nil {
 		config.RestorePortalSession = *options.RestorePortalSession
 	}
+	if options.Keystrokes != nil {
+		config.Keystrokes = *options.Keystrokes
+	}
+	if options.KeystrokeHold != nil && *options.KeystrokeHold > 0 {
+		config.KeystrokeHold = *options.KeystrokeHold
+	}
 	return config
 }
 
@@ -315,6 +333,15 @@ func (r *Recorder) Resume() (State, error) {
 }
 
 func (r *Recorder) Stop(ctx context.Context) (State, error) {
+	return r.finish(ctx, false)
+}
+
+// Discard stops the recording and deletes its file instead of keeping it.
+func (r *Recorder) Discard(ctx context.Context) (State, error) {
+	return r.finish(ctx, true)
+}
+
+func (r *Recorder) finish(ctx context.Context, discard bool) (State, error) {
 	r.mu.Lock()
 	if r.cmd == nil {
 		state := r.stateLocked(time.Now())
@@ -323,6 +350,9 @@ func (r *Recorder) Stop(ctx context.Context) (State, error) {
 	}
 	cmd := r.cmd
 	done := r.done
+	if discard {
+		r.discarding = true
+	}
 	if !r.stopping {
 		r.stopping = true
 		if err := signalProcessGroup(cmd.Process.Pid, syscall.SIGINT); err != nil {
@@ -348,6 +378,67 @@ func (r *Recorder) Stop(ctx context.Context) (State, error) {
 		_ = signalProcessGroup(cmd.Process.Pid, syscall.SIGKILL)
 		return r.State(), fmt.Errorf("timed out finalizing recording: %w", ctx.Err())
 	}
+}
+
+// Rename moves the last finished recording. A bare name stays in the same folder
+// and keeps the original extension when none is given, so callers can pass the
+// text a user typed straight through.
+func (r *Recorder) Rename(target string) (State, error) {
+	r.mu.Lock()
+	if r.lastOutput == "" {
+		state := r.stateLocked(time.Now())
+		r.mu.Unlock()
+		return state, ErrNothingToRename
+	}
+	destination, err := resolveRenameTarget(r.lastOutput, target)
+	if err == nil && destination != r.lastOutput {
+		if _, statErr := os.Stat(destination); statErr == nil {
+			err = fmt.Errorf("%s already exists", filepath.Base(destination))
+		} else if renameErr := os.Rename(r.lastOutput, destination); renameErr != nil {
+			err = fmt.Errorf("rename recording: %w", renameErr)
+		} else {
+			r.lastOutput = destination
+		}
+	}
+	state := r.stateLocked(time.Now())
+	listener := r.stateListener
+	r.mu.Unlock()
+	if err != nil {
+		return state, err
+	}
+	notify(listener, state)
+	return state, nil
+}
+
+func resolveRenameTarget(current, target string) (string, error) {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return "", errors.New("the new name must not be empty")
+	}
+	if target == "." || target == ".." {
+		return "", fmt.Errorf("%q is not a valid file name", target)
+	}
+	if !strings.ContainsRune(target, filepath.Separator) {
+		target = filepath.Join(filepath.Dir(current), target)
+	}
+	if filepath.Ext(target) == "" {
+		target += filepath.Ext(current)
+	}
+	return filepath.Clean(target), nil
+}
+
+// SetKeystrokes switches keystroke publishing for the running recording.
+func (r *Recorder) SetKeystrokes(enabled bool, holdSeconds float64) State {
+	r.mu.Lock()
+	r.keystrokes = enabled
+	if holdSeconds > 0 {
+		r.keystrokeHold = holdSeconds
+	}
+	state := r.stateLocked(time.Now())
+	listener := r.stateListener
+	r.mu.Unlock()
+	notify(listener, state)
+	return state
 }
 
 func (r *Recorder) State() State {
@@ -432,16 +523,20 @@ func (r *Recorder) wait(cmd *exec.Cmd, done chan struct{}, output string) {
 	}
 
 	wasStopping := r.stopping
+	discarded := r.discarding
 	r.cmd = nil
 	r.done = nil
 	r.stopping = false
+	r.discarding = false
 	r.output = ""
 	r.awaitingFirstFrame = false
 	_ = os.Remove(firstFrameStampPath(output))
 	r.paused = false
 	r.pausedAt = time.Time{}
 	r.pausedFor = 0
-	if fileInfo, statErr := os.Stat(output); statErr == nil && fileInfo.Size() > 0 {
+	if discarded {
+		_ = os.Remove(output)
+	} else if fileInfo, statErr := os.Stat(output); statErr == nil && fileInfo.Size() > 0 {
 		r.lastOutput = output
 	}
 	if err != nil && !wasStopping {
@@ -471,6 +566,8 @@ func (r *Recorder) stateLocked(now time.Time) State {
 		LastOutputFile:     r.lastOutput,
 		LastError:          r.lastError,
 		AwaitingFirstFrame: r.cmd != nil && r.awaitingFirstFrame,
+		Keystrokes:         r.cmd != nil && r.keystrokes,
+		KeystrokeHold:      r.keystrokeHold,
 		Selecting:          r.selectCmd != nil,
 		SelectionReady:     r.selectionReady,
 	}

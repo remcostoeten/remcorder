@@ -10,6 +10,10 @@
 #include <QBuffer>
 #include <QClipboard>
 #include <QCoreApplication>
+#include <QDBusConnection>
+#include <QDBusInterface>
+#include <QDBusReply>
+#include <QDateTime>
 #include <QDesktopServices>
 #include <QDir>
 #include <QFile>
@@ -33,6 +37,7 @@
 #include <unistd.h>
 
 #include <cmath>
+#include <utility>
 
 namespace {
 constexpr auto organization = "RemcoStoeten";
@@ -126,6 +131,8 @@ RecorderBackend::RecorderBackend(QObject *parent)
 
 RecorderBackend::~RecorderBackend()
 {
+    if (m_clickHighlightActive)
+        armClickEffect(false);
     stopMicMonitor();
     if (m_cueSink)
         m_cueSink->stop();
@@ -295,6 +302,357 @@ void RecorderBackend::setSoundCuesEnabled(bool value)
     emit settingsChanged();
 }
 
+void RecorderBackend::setShowKeystrokes(bool value)
+{
+    if (value == m_showKeystrokes)
+        return;
+    m_showKeystrokes = value;
+    saveSetting(QStringLiteral("showKeystrokes"), value);
+    if (!value)
+        clearKeystrokes();
+    syncKeystrokePolling();
+    pushKeystrokeOptions();
+    updateTray();
+    emit settingsChanged();
+}
+
+void RecorderBackend::setKeystrokePlacement(const QString &value)
+{
+    const QString clean = value == QStringLiteral("floating")
+        ? QStringLiteral("floating")
+        : QStringLiteral("pill");
+    if (clean == m_keystrokePlacement)
+        return;
+    m_keystrokePlacement = clean;
+    saveSetting(QStringLiteral("keystrokePlacement"), clean);
+    emit settingsChanged();
+}
+
+namespace {
+
+QString oneOf(const QString &value, const QStringList &allowed, const QString &fallback)
+{
+    return allowed.contains(value) ? value : fallback;
+}
+
+}
+
+namespace {
+
+constexpr auto kwinService = "org.kde.KWin";
+constexpr auto effectsPath = "/Effects";
+constexpr auto effectsInterface = "org.kde.kwin.Effects";
+constexpr auto clickEffect = "mouseclick";
+
+QDBusInterface kwinEffects()
+{
+    return QDBusInterface(QLatin1String(kwinService), QLatin1String(effectsPath),
+                          QLatin1String(effectsInterface), QDBusConnection::sessionBus());
+}
+
+}
+
+/**
+ * KWin's mouseclick effect exists for exactly this ("useful for
+ * screenrecordings/presentations"), and drawing our own is not an option: a
+ * click-through overlay never receives pointer events, so a Wayland client
+ * cannot know where the cursor is.
+ */
+bool RecorderBackend::clickHighlightSupported() const
+{
+    auto effects = kwinEffects();
+    if (!effects.isValid())
+        return false;
+    const QDBusReply<bool> reply = effects.call(QStringLiteral("isEffectSupported"),
+                                                QLatin1String(clickEffect));
+    return reply.isValid() && reply.value();
+}
+
+// The effect only exposes a stateless toggle shortcut, but it reports its state
+// in the support dump, so the toggle can be driven to a known value.
+bool RecorderBackend::clickEffectArmed() const
+{
+    auto effects = kwinEffects();
+    if (!effects.isValid())
+        return false;
+    const QDBusReply<QString> reply = effects.call(QStringLiteral("supportInformation"),
+                                                   QLatin1String(clickEffect));
+    if (!reply.isValid())
+        return false;
+    for (const QString &line : reply.value().split(QLatin1Char('\n'))) {
+        if (line.trimmed().startsWith(QLatin1String("enabled:")))
+            return line.trimmed().endsWith(QLatin1String("true"));
+    }
+    return false;
+}
+
+void RecorderBackend::armClickEffect(bool armed)
+{
+    auto effects = kwinEffects();
+    if (!effects.isValid())
+        return;
+
+    if (armed) {
+        const QDBusReply<bool> loaded = effects.call(QStringLiteral("isEffectLoaded"),
+                                                     QLatin1String(clickEffect));
+        if (loaded.isValid() && !loaded.value()) {
+            seedClickEffectDefaults();
+            effects.call(QStringLiteral("loadEffect"), QLatin1String(clickEffect));
+            m_clickEffectLoadedHere = true;
+        }
+    }
+
+    if (clickEffectArmed() != armed) {
+        QDBusInterface(QStringLiteral("org.kde.kglobalaccel"),
+                       QStringLiteral("/component/kwin"),
+                       QStringLiteral("org.kde.kglobalaccel.Component"),
+                       QDBusConnection::sessionBus())
+            .call(QStringLiteral("invokeShortcut"), QStringLiteral("ToggleMouseClick"));
+    }
+
+    // Leaving an effect loaded that the user never enabled themselves would show
+    // up in their System Settings as ours.
+    if (!armed && m_clickEffectLoadedHere) {
+        effects.call(QStringLiteral("unloadEffect"), QLatin1String(clickEffect));
+        m_clickEffectLoadedHere = false;
+    }
+}
+
+// A 20px ring one pixel wide is what KWin ships and is invisible on a 4K screen,
+// so give the effect usable defaults the first time. An existing group means the
+// user has their own settings and they are left alone.
+void RecorderBackend::seedClickEffectDefaults() const
+{
+    if (QStandardPaths::findExecutable(QStringLiteral("kwriteconfig6")).isEmpty())
+        return;
+    QSettings kwin(QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation)
+                       + QStringLiteral("/kwinrc"),
+                   QSettings::IniFormat);
+    if (kwin.childGroups().contains(QStringLiteral("Effect-mouseclick")))
+        return;
+
+    const QList<QPair<QString, QString>> defaults{
+        {QStringLiteral("RingSize"), QStringLiteral("60")},
+        {QStringLiteral("LineWidth"), QStringLiteral("4")},
+        {QStringLiteral("RingCount"), QStringLiteral("3")},
+        {QStringLiteral("ShowText"), QStringLiteral("false")},
+    };
+    for (const auto &[key, value] : defaults) {
+        QProcess::execute(QStringLiteral("kwriteconfig6"),
+                          {QStringLiteral("--file"), QStringLiteral("kwinrc"),
+                           QStringLiteral("--group"), QStringLiteral("Effect-mouseclick"),
+                           QStringLiteral("--key"), key, value});
+    }
+    // reconfigureEffect only re-reads KWin's in-memory config; the values above
+    // were written to the file by another process, so KWin has to reload first.
+    QDBusInterface(QLatin1String(kwinService), QStringLiteral("/KWin"),
+                   QLatin1String(kwinService), QDBusConnection::sessionBus())
+        .call(QStringLiteral("reconfigure"));
+    kwinEffects().call(QStringLiteral("reconfigureEffect"), QLatin1String(clickEffect));
+}
+
+void RecorderBackend::syncClickHighlight()
+{
+    const bool wanted = m_recording && m_highlightClicks;
+    if (wanted == m_clickHighlightActive)
+        return;
+    m_clickHighlightActive = wanted;
+    armClickEffect(wanted);
+}
+
+void RecorderBackend::setHighlightClicks(bool value)
+{
+    if (value == m_highlightClicks)
+        return;
+    m_highlightClicks = value;
+    saveSetting(QStringLiteral("highlightClicks"), value);
+    syncClickHighlight();
+    emit settingsChanged();
+}
+
+void RecorderBackend::setWebcamEnabled(bool value)
+{
+    if (value == m_webcamEnabled)
+        return;
+    m_webcamEnabled = value;
+    saveSetting(QStringLiteral("webcamEnabled"), value);
+    emit settingsChanged();
+}
+
+void RecorderBackend::setWebcamShape(const QString &value)
+{
+    const QString clean = oneOf(value, {QStringLiteral("circle"), QStringLiteral("square")},
+                                QStringLiteral("circle"));
+    if (clean == m_webcamShape)
+        return;
+    m_webcamShape = clean;
+    saveSetting(QStringLiteral("webcamShape"), clean);
+    emit settingsChanged();
+}
+
+void RecorderBackend::setWebcamCorner(const QString &value)
+{
+    const QString clean = oneOf(value,
+                                {QStringLiteral("topLeft"), QStringLiteral("topRight"),
+                                 QStringLiteral("bottomLeft"), QStringLiteral("bottomRight")},
+                                QStringLiteral("bottomRight"));
+    if (clean == m_webcamCorner)
+        return;
+    m_webcamCorner = clean;
+    saveSetting(QStringLiteral("webcamCorner"), clean);
+    emit settingsChanged();
+}
+
+void RecorderBackend::setWebcamSize(const QString &value)
+{
+    const QString clean = oneOf(value,
+                                {QStringLiteral("small"), QStringLiteral("medium"), QStringLiteral("large")},
+                                QStringLiteral("medium"));
+    if (clean == m_webcamSize)
+        return;
+    m_webcamSize = clean;
+    saveSetting(QStringLiteral("webcamSize"), clean);
+    emit settingsChanged();
+}
+
+void RecorderBackend::setWebcamDevice(const QString &value)
+{
+    if (value == m_webcamDevice)
+        return;
+    m_webcamDevice = value;
+    saveSetting(QStringLiteral("webcamDevice"), value);
+    emit settingsChanged();
+}
+
+void RecorderBackend::setWebcamMirrored(bool value)
+{
+    if (value == m_webcamMirrored)
+        return;
+    m_webcamMirrored = value;
+    saveSetting(QStringLiteral("webcamMirrored"), value);
+    emit settingsChanged();
+}
+
+void RecorderBackend::pushKeystrokeOptions()
+{
+    if (!m_recording)
+        return;
+    QJsonObject response;
+    const QJsonObject options{
+        {QStringLiteral("keystrokes"), m_showKeystrokes},
+        {QStringLiteral("keystroke_hold"), m_keystrokeHoldSeconds},
+    };
+    if (request({
+            {QStringLiteral("action"), QStringLiteral("keystrokes")},
+            {QStringLiteral("options"), options},
+        }, &response, false))
+        applyResponse(response);
+}
+
+void RecorderBackend::setKeystrokeHoldSeconds(double value)
+{
+    const double clamped = qBound(0.5, value, 15.0);
+    if (qFuzzyCompare(clamped, m_keystrokeHoldSeconds))
+        return;
+    m_keystrokeHoldSeconds = clamped;
+    saveSetting(QStringLiteral("keystrokeHoldSeconds"), clamped);
+    pushKeystrokeOptions();
+    emit settingsChanged();
+}
+
+QString RecorderBackend::keystrokePath() const
+{
+    return QFileInfo(socketPath()).dir().filePath(QStringLiteral("keys.json"));
+}
+
+void RecorderBackend::syncKeystrokePolling()
+{
+    const bool wanted = m_recording && m_showKeystrokes;
+    if (!wanted) {
+        if (m_keystrokeTimer)
+            m_keystrokeTimer->stop();
+        clearKeystrokes();
+        return;
+    }
+    if (!m_keystrokeTimer) {
+        m_keystrokeTimer = new QTimer(this);
+        m_keystrokeTimer->setInterval(50);
+        connect(m_keystrokeTimer, &QTimer::timeout, this, &RecorderBackend::pollKeystrokes);
+    }
+    if (!m_keystrokeTimer->isActive())
+        m_keystrokeTimer->start();
+}
+
+void RecorderBackend::clearKeystrokes()
+{
+    m_keystrokeRaw.clear();
+    m_keystrokeCutoffId = 0;
+    const bool hadContent = !m_keystrokeTokens.isEmpty() || m_keystrokesVisible;
+    m_keystrokeTokens.clear();
+    m_keystrokesVisible = false;
+    if (hadContent)
+        emit keystrokesChanged();
+}
+
+void RecorderBackend::pollKeystrokes()
+{
+    QFile file(keystrokePath());
+    QByteArray raw;
+    if (file.open(QIODevice::ReadOnly))
+        raw = file.readAll();
+
+    bool changed = false;
+    if (raw != m_keystrokeRaw) {
+        m_keystrokeRaw = raw;
+        const QJsonObject snapshot = QJsonDocument::fromJson(raw).object();
+        QVariantList tokens;
+        for (const QJsonValue &entry : snapshot.value(QStringLiteral("tokens")).toArray()) {
+            const QJsonObject token = entry.toObject();
+            const qint64 id = token.value(QStringLiteral("id")).toInteger();
+            if (id <= m_keystrokeCutoffId)
+                continue;
+            tokens.append(QVariantMap{
+                {QStringLiteral("tokenId"), id},
+                {QStringLiteral("text"), token.value(QStringLiteral("text")).toString()},
+                {QStringLiteral("count"), token.value(QStringLiteral("count")).toInt()},
+            });
+        }
+        const double hold = snapshot.value(QStringLiteral("hold_seconds")).toDouble();
+        if (hold > 0)
+            m_keystrokeHoldMs = int(hold * 1000);
+        const QDateTime stamp = QDateTime::fromString(
+            snapshot.value(QStringLiteral("updated_at")).toString(), Qt::ISODateWithMs);
+        if (stamp.isValid())
+            m_keystrokeUpdatedMs = stamp.toMSecsSinceEpoch();
+        const QString error = snapshot.value(QStringLiteral("error")).toString();
+        if (error != m_keystrokeError) {
+            m_keystrokeError = error;
+            changed = true;
+        }
+        if (tokens != m_keystrokeTokens) {
+            m_keystrokeTokens = tokens;
+            changed = true;
+        }
+    }
+
+    const bool faded = QDateTime::currentMSecsSinceEpoch() - m_keystrokeUpdatedMs > m_keystrokeHoldMs;
+    const bool visible = !m_keystrokeTokens.isEmpty() && !faded;
+    if (visible != m_keystrokesVisible) {
+        m_keystrokesVisible = visible;
+        changed = true;
+    }
+    // Once the row has faded, anything still in the snapshot belongs to the old
+    // row; drop it so the next key starts a fresh row at the left edge.
+    if (faded && !m_keystrokeTokens.isEmpty()) {
+        for (const QVariant &token : std::as_const(m_keystrokeTokens))
+            m_keystrokeCutoffId = qMax(m_keystrokeCutoffId, token.toMap().value(QStringLiteral("tokenId")).toLongLong());
+        m_keystrokeTokens.clear();
+        changed = true;
+    }
+    if (changed)
+        emit keystrokesChanged();
+}
+
 void RecorderBackend::setStartDelaySeconds(int value)
 {
     const int clamped = qBound(0, value, 30);
@@ -426,6 +784,8 @@ void RecorderBackend::beginRecording()
         {QStringLiteral("quality"), quality},
         {QStringLiteral("output_directory"), m_outputDirectory},
         {QStringLiteral("cursor"), m_captureCursor},
+        {QStringLiteral("keystrokes"), m_showKeystrokes},
+        {QStringLiteral("keystroke_hold"), m_keystrokeHoldSeconds},
     };
     if (m_captureSource == QStringLiteral("region"))
         options.insert(QStringLiteral("region"), m_captureRegion);
@@ -450,6 +810,27 @@ void RecorderBackend::stopRecording()
     QJsonObject response;
     if (request({{QStringLiteral("action"), QStringLiteral("stop")}}, &response, true, 13000))
         applyResponse(response);
+}
+
+void RecorderBackend::discardRecording()
+{
+    if (m_countdownRemaining > 0) {
+        cancelCountdown();
+        return;
+    }
+    QJsonObject response;
+    if (!request({{QStringLiteral("action"), QStringLiteral("discard")}}, &response, true, 13000))
+        return;
+    const bool wasRecording = m_recording;
+    applyResponse(response);
+    if (wasRecording && !m_recording) {
+        playDiscardCue();
+        m_lastNotificationPath.clear();
+        if (m_tray)
+            m_tray->showMessage(QStringLiteral("Recording discarded"),
+                                QStringLiteral("Nothing was saved."),
+                                QSystemTrayIcon::Information, 4000);
+    }
 }
 
 void RecorderBackend::togglePause()
@@ -635,6 +1016,90 @@ void RecorderBackend::openRecentRecording(const QString &path)
         QDesktopServices::openUrl(QUrl::fromLocalFile(path));
 }
 
+void RecorderBackend::revealRecording(const QString &path)
+{
+    if (path.isEmpty())
+        return;
+    const QFileInfo info(path);
+    if (info.exists()) {
+        QDBusInterface fileManager(QStringLiteral("org.freedesktop.FileManager1"),
+                                   QStringLiteral("/org/freedesktop/FileManager1"),
+                                   QStringLiteral("org.freedesktop.FileManager1"),
+                                   QDBusConnection::sessionBus());
+        if (fileManager.isValid()) {
+            const QDBusReply<void> reply = fileManager.call(
+                QStringLiteral("ShowItems"),
+                QStringList{QUrl::fromLocalFile(info.absoluteFilePath()).toString()},
+                QString());
+            if (reply.isValid())
+                return;
+        }
+    }
+    QDesktopServices::openUrl(QUrl::fromLocalFile(info.absolutePath()));
+}
+
+void RecorderBackend::revealLastRecording()
+{
+    revealRecording(m_lastOutputFile);
+}
+
+QString RecorderBackend::renameLastRecording(const QString &name)
+{
+    if (m_lastOutputFile.isEmpty())
+        return QStringLiteral("There is no recording to rename.");
+    const QString trimmed = name.trimmed();
+    if (trimmed.isEmpty())
+        return QStringLiteral("Give the recording a name.");
+    if (trimmed.contains(QLatin1Char('/')))
+        return QStringLiteral("Use a plain file name without slashes.");
+    const QString previous = m_lastOutputFile;
+    QJsonObject response;
+    if (!request({{QStringLiteral("action"), QStringLiteral("rename")},
+                  {QStringLiteral("path"), trimmed}},
+                 &response, true))
+        return m_errorMessage.isEmpty() ? QStringLiteral("The recording could not be renamed.") : m_errorMessage;
+    applyResponse(response);
+    if (m_lastOutputFile == previous)
+        return {};
+    if (m_lastNotificationPath == previous)
+        m_lastNotificationPath = m_lastOutputFile;
+    const int recentIndex = m_recentRecordings.indexOf(QVariant(previous));
+    if (recentIndex >= 0) {
+        m_recentRecordings[recentIndex] = m_lastOutputFile;
+        saveSetting(QStringLiteral("recentRecordings"), m_recentRecordings);
+        emit recentRecordingsChanged();
+        updateRecentMenu();
+    }
+    return {};
+}
+
+QVariantMap RecorderBackend::recordingInfo(const QString &path) const
+{
+    const QFileInfo info(path);
+    return QVariantMap{
+        {QStringLiteral("exists"), info.exists()},
+        {QStringLiteral("fileName"), info.fileName()},
+        {QStringLiteral("baseName"), info.completeBaseName()},
+        {QStringLiteral("suffix"), info.suffix()},
+        {QStringLiteral("directory"), info.absolutePath()},
+        {QStringLiteral("sizeBytes"), info.exists() ? info.size() : 0},
+        {QStringLiteral("sizeLabel"), info.exists() ? formatBytes(info.size()) : QString()},
+        {QStringLiteral("modifiedMs"), info.exists() ? info.lastModified().toMSecsSinceEpoch() : 0},
+    };
+}
+
+QString RecorderBackend::formatBytes(qint64 bytes) const
+{
+    constexpr double kib = 1024.0;
+    if (bytes < kib)
+        return QStringLiteral("%1 B").arg(bytes);
+    if (bytes < kib * kib)
+        return QStringLiteral("%1 KB").arg(bytes / kib, 0, 'f', 0);
+    if (bytes < kib * kib * kib)
+        return QStringLiteral("%1 MB").arg(bytes / (kib * kib), 0, 'f', 1);
+    return QStringLiteral("%1 GB").arg(bytes / (kib * kib * kib), 0, 'f', 2);
+}
+
 QString RecorderBackend::formatDuration(qint64 seconds) const
 {
     seconds = qMax<qint64>(0, seconds);
@@ -733,6 +1198,8 @@ void RecorderBackend::applyResponse(const QJsonObject &response)
 
     emit stateChanged();
     updateTray();
+    syncKeystrokePolling();
+    syncClickHighlight();
 
     if (wasChoosingSource && !m_choosingSource) {
         setPollInterval(1000);
@@ -759,6 +1226,7 @@ void RecorderBackend::applyResponse(const QJsonObject &response)
         playStopCue();
         notifyTray(QStringLiteral("Recording saved"), m_lastOutputFile);
         rememberRecentRecording(m_lastOutputFile);
+        emit recordingSaved(m_lastOutputFile);
     }
 }
 
@@ -795,6 +1263,25 @@ void RecorderBackend::loadSettings()
     if (!QFileInfo::exists(m_lastTrimmedOutputFile))
         m_lastTrimmedOutputFile.clear();
     m_soundCuesEnabled = settings.value(QStringLiteral("soundCuesEnabled"), true).toBool();
+    m_showKeystrokes = settings.value(QStringLiteral("showKeystrokes"), false).toBool();
+    m_keystrokeHoldSeconds = qBound(
+        0.5, settings.value(QStringLiteral("keystrokeHoldSeconds"), 2.5).toDouble(), 15.0);
+    m_keystrokePlacement = settings.value(
+        QStringLiteral("keystrokePlacement"), QStringLiteral("pill")).toString();
+    m_highlightClicks = settings.value(QStringLiteral("highlightClicks"), false).toBool();
+    m_webcamEnabled = settings.value(QStringLiteral("webcamEnabled"), false).toBool();
+    m_webcamShape = oneOf(settings.value(QStringLiteral("webcamShape")).toString(),
+                          {QStringLiteral("circle"), QStringLiteral("square")},
+                          QStringLiteral("circle"));
+    m_webcamCorner = oneOf(settings.value(QStringLiteral("webcamCorner")).toString(),
+                           {QStringLiteral("topLeft"), QStringLiteral("topRight"),
+                            QStringLiteral("bottomLeft"), QStringLiteral("bottomRight")},
+                           QStringLiteral("bottomRight"));
+    m_webcamSize = oneOf(settings.value(QStringLiteral("webcamSize")).toString(),
+                         {QStringLiteral("small"), QStringLiteral("medium"), QStringLiteral("large")},
+                         QStringLiteral("medium"));
+    m_webcamDevice = settings.value(QStringLiteral("webcamDevice")).toString();
+    m_webcamMirrored = settings.value(QStringLiteral("webcamMirrored"), true).toBool();
     m_startDelaySeconds = qBound(
         0, settings.value(QStringLiteral("startDelaySeconds"), 0).toInt(), 30);
     m_recentRecordings.clear();
@@ -828,8 +1315,13 @@ void RecorderBackend::setupTray()
     m_recordAction = m_trayMenu->addAction(QStringLiteral("Start recording"));
     m_pauseAction = m_trayMenu->addAction(QStringLiteral("Pause"));
     m_stopAction = m_trayMenu->addAction(QStringLiteral("Stop and save"));
+    m_discardAction = m_trayMenu->addAction(QStringLiteral("Stop without saving"));
+    m_keystrokesAction = m_trayMenu->addAction(QStringLiteral("Show keystrokes"));
+    m_keystrokesAction->setCheckable(true);
+    m_keystrokesAction->setChecked(m_showKeystrokes);
     m_trayMenu->addSeparator();
     m_openAction = m_trayMenu->addAction(QStringLiteral("Open recordings folder"));
+    m_revealAction = m_trayMenu->addAction(QStringLiteral("Show last recording in folder"));
     m_openTrimAction = m_trayMenu->addAction(QStringLiteral("Open last trimmed copy"));
     m_copyPathAction = m_trayMenu->addAction(QStringLiteral("Copy last recording path"));
     m_recentMenu = m_trayMenu->addMenu(QStringLiteral("Recent recordings"));
@@ -844,7 +1336,10 @@ void RecorderBackend::setupTray()
     });
     connect(m_pauseAction, &QAction::triggered, this, &RecorderBackend::togglePause);
     connect(m_stopAction, &QAction::triggered, this, &RecorderBackend::stopRecording);
+    connect(m_discardAction, &QAction::triggered, this, &RecorderBackend::discardRecording);
+    connect(m_keystrokesAction, &QAction::toggled, this, &RecorderBackend::setShowKeystrokes);
     connect(m_openAction, &QAction::triggered, this, &RecorderBackend::openOutputDirectory);
+    connect(m_revealAction, &QAction::triggered, this, &RecorderBackend::revealLastRecording);
     connect(m_openTrimAction, &QAction::triggered,
             this, &RecorderBackend::openLastTrimmedRecording);
     connect(m_copyPathAction, &QAction::triggered, this, &RecorderBackend::copyLastOutputPath);
@@ -878,8 +1373,12 @@ void RecorderBackend::updateTray()
     m_pauseAction->setEnabled(m_serviceAvailable && m_recording);
     m_pauseAction->setText(m_paused ? QStringLiteral("Resume") : QStringLiteral("Pause"));
     m_stopAction->setEnabled(m_serviceAvailable && m_recording);
+    m_discardAction->setEnabled(m_serviceAvailable && m_recording);
+    if (m_keystrokesAction->isChecked() != m_showKeystrokes)
+        m_keystrokesAction->setChecked(m_showKeystrokes);
     m_openTrimAction->setEnabled(!m_lastTrimmedOutputFile.isEmpty() && !m_processingTrim);
     m_copyPathAction->setEnabled(!m_lastOutputFile.isEmpty());
+    m_revealAction->setEnabled(!m_lastOutputFile.isEmpty());
     m_quitAction->setEnabled(!m_processingTrim);
     if (m_processingTrim) {
         m_tray->setToolTip(QStringLiteral("Exporting trim · %1%").arg(m_trimProgress));
@@ -995,6 +1494,11 @@ void RecorderBackend::playStartCue()
 void RecorderBackend::playStopCue()
 {
     playCue({{1174.7, 80}, {0.0, 30}, {587.3, 170}});
+}
+
+void RecorderBackend::playDiscardCue()
+{
+    playCue({{587.3, 70}, {0.0, 30}, {392.0, 170}});
 }
 
 void RecorderBackend::playCountdownTick(bool last)

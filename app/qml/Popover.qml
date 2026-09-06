@@ -16,6 +16,11 @@ Popup {
     focus: true
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
 
+    onClosed: {
+        if (anchorItem && anchorItem.visible)
+            anchorItem.forceActiveFocus(Qt.PopupFocusReason)
+    }
+
     enter: Transition {
         NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 120 }
         NumberAnimation {

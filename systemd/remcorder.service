@@ -6,7 +6,9 @@ PartOf=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/remcorderd
+Environment=REMCORDER_DAEMON_ARGS=
+EnvironmentFile=-%h/.config/remcorder/daemon.env
+ExecStart=%h/.local/bin/remcorderd $REMCORDER_DAEMON_ARGS
 Restart=on-failure
 RestartSec=2
 

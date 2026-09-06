@@ -1,3 +1,4 @@
+import QtMultimedia
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -13,13 +14,14 @@ ApplicationWindow {
         : backend.captureSource === "region" ? "region" : "direct"
 
     property bool restoreOnStop: true
+    property string dismissedRecording: ""
+    property bool freshRecording: false
 
     readonly property int chromeHeight: 46
     readonly property int bodyHeight: chromeHeight + body.implicitHeight + 25
 
-    width: 464
+    width: 480
     height: bodyHeight
-    minimumWidth: 430
     minimumHeight: bodyHeight
     maximumHeight: bodyHeight
     visible: !backend.startHidden
@@ -68,6 +70,29 @@ ApplicationWindow {
             root.raise()
             root.requestActivate()
         }
+        function onRecordingSaved(path) {
+            root.dismissedRecording = ""
+            root.freshRecording = true
+            freshTimer.restart()
+        }
+    }
+
+    Timer {
+        id: freshTimer
+        interval: 8000
+        onTriggered: root.freshRecording = false
+    }
+
+    Connections {
+        target: singleInstance
+        function onShowRequested() {
+            root.show()
+            root.raise()
+            root.requestActivate()
+        }
+        function onTrimRequested(path) {
+            trimWindow.openForSource(path)
+        }
     }
 
     Binding {
@@ -76,7 +101,20 @@ ApplicationWindow {
         value: backend.microphoneEnabled && root.visible && !backend.recording
     }
 
+    MediaDevices { id: cameras }
+
     RecordingPill { id: pill }
+
+    AnnotationTools { id: annotations }
+
+    KeystrokeWindow {
+        visible: pill.visible && !pill.counting && backend.showKeystrokes
+            && backend.keystrokePlacement === "floating"
+    }
+
+    WebcamWindow {
+        active: backend.webcamEnabled && (root.visible || root.live)
+    }
 
     TrimWindow { id: trimWindow }
 
@@ -391,14 +429,16 @@ ApplicationWindow {
             }
 
             Chip {
+                id: overlaysChip
                 Layout.fillWidth: true
-                Layout.preferredWidth: 92
+                Layout.preferredWidth: 112
                 glyph: "cursor"
-                label: "Cursor"
-                checked: backend.captureCursor
-                tint: Theme.focusInk
-                Accessible.name: "Include the pointer"
-                onToggled: backend.captureCursor = !backend.captureCursor
+                label: "Overlays"
+                checkable: false
+                hasMenu: true
+                menuOpen: overlaysPopover.opened
+                Accessible.name: "Overlay settings"
+                onMenuRequested: overlaysPopover.opened ? overlaysPopover.close() : overlaysPopover.open()
             }
 
             Chip {
@@ -420,10 +460,13 @@ ApplicationWindow {
         PrimaryButton {
             Layout.fillWidth: true
             implicitHeight: 48
+            readonly property bool regionMissing: root.mode === "region" && backend.captureRegion.length === 0
+
             enabled: backend.serviceAvailable
                 && !root.busy
                 && !backend.choosingSource
                 && !backend.awaitingFirstFrame
+                && !regionMissing
             glyph: root.busy || backend.choosingSource ? "" : "record"
             tint: root.busy ? Theme.focusBlue : Theme.signal
             text: backend.processingTrim
@@ -432,10 +475,23 @@ ApplicationWindow {
                 ? "Waiting for your pick…"
                 : backend.awaitingFirstFrame
                 ? "Warming up the encoder…"
+                : regionMissing
+                ? "Select a region first"
                 : backend.startDelaySeconds > 0
                 ? "Start recording in " + backend.startDelaySeconds + "s"
                 : "Start recording"
             onClicked: backend.startRecording()
+        }
+
+        SavedRecordingCard {
+            Layout.fillWidth: true
+            visible: !root.live
+                && backend.lastOutputFile.length > 0
+                && backend.lastOutputFile !== root.dismissedRecording
+            path: backend.lastOutputFile
+            fresh: root.freshRecording
+            onTrimRequested: target => trimWindow.openForSource(target)
+            onDismissed: root.dismissedRecording = backend.lastOutputFile
         }
 
         RowLayout {
@@ -560,10 +616,10 @@ ApplicationWindow {
                         width: 15
                         height: 15
                         radius: 7.5
-                        color: "#FFFFFF"
+                        color: gainSlider.activeFocus ? Theme.focusInk : "#FFFFFF"
                         border.width: 4
                         border.color: gainSlider.value > 1.0 ? Theme.amber : Theme.focusBlue
-                        scale: gainSlider.pressed ? 1.15 : 1
+                        scale: gainSlider.pressed || gainSlider.activeFocus ? 1.15 : 1
 
                         Behavior on scale { NumberAnimation { duration: 110 } }
                     }
@@ -673,6 +729,448 @@ ApplicationWindow {
     }
 
     Popover {
+        id: overlaysPopover
+        anchorItem: overlaysChip
+        width: 288
+
+        contentItem: ColumnLayout {
+            spacing: 9
+
+            Text {
+                text: "Overlays"
+                color: Theme.ink
+                font.family: Theme.sans
+                font.pixelSize: 13
+                font.weight: Font.DemiBold
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 1
+
+                    Text {
+                        text: "Show pointer"
+                        color: Theme.ink
+                        font.family: Theme.sans
+                        font.pixelSize: 13
+                        font.weight: Font.Medium
+                    }
+                    Text {
+                        text: "Include the cursor in the capture."
+                        color: Theme.inkFaint
+                        font.family: Theme.sans
+                        font.pixelSize: 11
+                    }
+                }
+                ModernSwitch {
+                    tint: Theme.focusBlue
+                    checked: backend.captureCursor
+                    onToggled: backend.captureCursor = checked
+                }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 1
+                color: Theme.strokeSoft
+                visible: backend.clickHighlightSupported
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                visible: backend.clickHighlightSupported
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 1
+
+                    Text {
+                        text: "Highlight clicks"
+                        color: Theme.ink
+                        font.family: Theme.sans
+                        font.pixelSize: 13
+                        font.weight: Font.Medium
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: "Rings around the pointer on every click, drawn by KWin while recording."
+                        color: Theme.inkFaint
+                        font.family: Theme.sans
+                        font.pixelSize: 11
+                        wrapMode: Text.WordWrap
+                    }
+                }
+                ModernSwitch {
+                    checked: backend.highlightClicks
+                    onToggled: backend.highlightClicks = checked
+                }
+            }
+
+            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: Theme.strokeSoft }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 1
+
+                    Text {
+                        text: "Show keystrokes"
+                        color: Theme.ink
+                        font.family: Theme.sans
+                        font.pixelSize: 13
+                        font.weight: Font.Medium
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: backend.keystrokeError.length > 0
+                            ? "Unavailable: " + backend.keystrokeError
+                            : "Key chips while recording; drag the floating strip anywhere. Every key you type is shown, so pause before passwords."
+                        color: backend.keystrokeError.length > 0 ? Theme.amber : Theme.inkFaint
+                        font.family: Theme.sans
+                        font.pixelSize: 11
+                        wrapMode: Text.WordWrap
+                    }
+                }
+                ModernSwitch {
+                    checked: backend.showKeystrokes
+                    onToggled: backend.showKeystrokes = checked
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                visible: backend.showKeystrokes
+
+                Text {
+                    Layout.fillWidth: true
+                    text: "Placement"
+                    color: Theme.inkDim
+                    font.family: Theme.sans
+                    font.pixelSize: 12
+                }
+
+                Segmented {
+                    Layout.preferredWidth: 168
+                    implicitHeight: 32
+                    options: [
+                        { value: "pill", label: "Above pill" },
+                        { value: "floating", label: "Floating" }
+                    ]
+                    current: backend.keystrokePlacement
+                    onPicked: value => backend.keystrokePlacement = value
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                visible: backend.showKeystrokes
+
+                Text {
+                    Layout.fillWidth: true
+                    text: "Keys fade after"
+                    color: Theme.inkDim
+                    font.family: Theme.sans
+                    font.pixelSize: 12
+                }
+
+                Segmented {
+                    Layout.preferredWidth: 168
+                    implicitHeight: 32
+                    options: [
+                        { value: "1", label: "1s" },
+                        { value: "2.5", label: "2.5s" },
+                        { value: "5", label: "5s" },
+                        { value: "10", label: "10s" }
+                    ]
+                    current: String(backend.keystrokeHoldSeconds)
+                    onPicked: value => backend.keystrokeHoldSeconds = parseFloat(value)
+                }
+            }
+
+            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: Theme.strokeSoft }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 1
+
+                    Text {
+                        text: "Annotation pen"
+                        color: Theme.ink
+                        font.family: Theme.sans
+                        font.pixelSize: 13
+                        font.weight: Font.Medium
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: annotations.penEnabled && annotationInput.error.length > 0
+                            ? annotationInput.error
+                            : "Double-tap left Shift to toggle drawing. Double right-click for colors; scroll for size."
+                        color: annotationInput.error.length > 0 ? Theme.amber : Theme.inkFaint
+                        font.family: Theme.sans
+                        font.pixelSize: 11
+                        wrapMode: Text.WordWrap
+                    }
+                }
+                ModernSwitch {
+                    checked: annotations.penEnabled
+                    onToggled: annotations.penEnabled = checked
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                visible: annotations.penEnabled
+                Text {
+                    Layout.fillWidth: true
+                    text: "Drawings stay (seconds)"
+                    color: Theme.inkDim
+                    font.family: Theme.sans
+                    font.pixelSize: 12
+                }
+                SpinBox {
+                    from: 1
+                    to: 300
+                    value: annotations.holdSeconds
+                    editable: true
+                    onValueModified: annotations.holdSeconds = value
+                    Accessible.name: "Drawing duration in seconds"
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                visible: annotations.penEnabled
+                Text {
+                    Layout.fillWidth: true
+                    text: "Fade drawings without path motion"
+                    color: Theme.inkDim
+                    font.family: Theme.sans
+                    font.pixelSize: 12
+                }
+                ModernSwitch {
+                    checked: annotations.reducedMotion
+                    onToggled: annotations.reducedMotion = checked
+                }
+            }
+
+            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: Theme.strokeSoft }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 1
+
+                    Text {
+                        text: "Webcam bubble"
+                        color: Theme.ink
+                        font.family: Theme.sans
+                        font.pixelSize: 13
+                        font.weight: Font.Medium
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: "A camera window pinned above everything, so the capture records it. Drag it anywhere; region capture only keeps it when it sits inside the region."
+                        color: Theme.inkFaint
+                        font.family: Theme.sans
+                        font.pixelSize: 11
+                        wrapMode: Text.WordWrap
+                    }
+                }
+                ModernSwitch {
+                    checked: backend.webcamEnabled
+                    onToggled: backend.webcamEnabled = checked
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                visible: backend.webcamEnabled
+
+                Text {
+                    Layout.fillWidth: true
+                    text: "Shape"
+                    color: Theme.inkDim
+                    font.family: Theme.sans
+                    font.pixelSize: 12
+                }
+
+                Segmented {
+                    Layout.preferredWidth: 168
+                    implicitHeight: 32
+                    options: [
+                        { value: "circle", label: "Circle" },
+                        { value: "square", label: "Square" }
+                    ]
+                    current: backend.webcamShape
+                    onPicked: value => backend.webcamShape = value
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                visible: backend.webcamEnabled
+
+                Text {
+                    Layout.fillWidth: true
+                    text: "Corner"
+                    color: Theme.inkDim
+                    font.family: Theme.sans
+                    font.pixelSize: 12
+                }
+
+                GridLayout {
+                    columns: 2
+                    columnSpacing: 4
+                    rowSpacing: 4
+
+                    Repeater {
+                        model: [
+                            { value: "topLeft", name: "Top left", right: false, bottom: false },
+                            { value: "topRight", name: "Top right", right: true, bottom: false },
+                            { value: "bottomLeft", name: "Bottom left", right: false, bottom: true },
+                            { value: "bottomRight", name: "Bottom right", right: true, bottom: true }
+                        ]
+
+                        delegate: Rectangle {
+                            id: cornerCell
+                            required property var modelData
+
+                            readonly property bool active: backend.webcamCorner === modelData.value
+
+                            Layout.preferredWidth: 34
+                            Layout.preferredHeight: 28
+                            radius: 7
+                            color: active ? Theme.surfaceTop : cornerHover.hovered ? Theme.surfaceHi : Theme.canvasLift
+                            border.width: 1
+                            border.color: active ? Theme.strokeHi : Theme.stroke
+
+                            Behavior on color { ColorAnimation { duration: 120 } }
+                            Behavior on border.color { ColorAnimation { duration: 120 } }
+
+                            activeFocusOnTab: true
+                            Keys.onSpacePressed: backend.webcamCorner = modelData.value
+                            Keys.onReturnPressed: backend.webcamCorner = modelData.value
+                            Keys.onEnterPressed: backend.webcamCorner = modelData.value
+
+                            FocusRing {}
+
+                            Rectangle {
+                                width: 6
+                                height: 6
+                                radius: 2
+                                color: cornerCell.active ? Theme.ink : Theme.inkFaint
+                                x: cornerCell.modelData.right ? parent.width - width - 5 : 5
+                                y: cornerCell.modelData.bottom ? parent.height - height - 5 : 5
+
+                                Behavior on color { ColorAnimation { duration: 120 } }
+                            }
+
+                            HoverHandler { id: cornerHover; cursorShape: Qt.PointingHandCursor }
+                            TapHandler { onTapped: backend.webcamCorner = cornerCell.modelData.value }
+
+                            Accessible.role: Accessible.Button
+                            Accessible.name: "Webcam in " + modelData.name.toLowerCase() + " corner"
+                        }
+                    }
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                visible: backend.webcamEnabled
+
+                Text {
+                    Layout.fillWidth: true
+                    text: "Size"
+                    color: Theme.inkDim
+                    font.family: Theme.sans
+                    font.pixelSize: 12
+                }
+
+                Segmented {
+                    Layout.preferredWidth: 200
+                    implicitHeight: 32
+                    options: [
+                        { value: "small", label: "S" },
+                        { value: "medium", label: "M" },
+                        { value: "large", label: "L" }
+                    ]
+                    current: backend.webcamSize
+                    onPicked: value => backend.webcamSize = value
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                visible: backend.webcamEnabled
+
+                Text {
+                    Layout.fillWidth: true
+                    text: "Mirror"
+                    color: Theme.inkDim
+                    font.family: Theme.sans
+                    font.pixelSize: 12
+                }
+
+                ModernSwitch {
+                    checked: backend.webcamMirrored
+                    onToggled: backend.webcamMirrored = checked
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                visible: backend.webcamEnabled && cameras.videoInputs.length > 1
+
+                Text {
+                    text: "Camera"
+                    color: Theme.inkDim
+                    font.family: Theme.sans
+                    font.pixelSize: 12
+                }
+
+                DeviceCombo {
+                    Layout.fillWidth: true
+                    implicitHeight: 32
+                    textRole: "description"
+                    valueRole: "id"
+                    model: cameras.videoInputs
+                    currentIndex: {
+                        const inputs = cameras.videoInputs
+                        for (let i = 0; i < inputs.length; ++i) {
+                            if (inputs[i].id === backend.webcamDevice)
+                                return i
+                        }
+                        return 0
+                    }
+                    onActivated: backend.webcamDevice = String(currentValue)
+                }
+            }
+        }
+    }
+
+    Popover {
         id: qualityPopover
         anchorItem: qualityChip
         width: 296
@@ -681,11 +1179,18 @@ ApplicationWindow {
             spacing: 9
 
             Text {
-                text: "Quality"
+                text: "Recording"
                 color: Theme.ink
                 font.family: Theme.sans
                 font.pixelSize: 13
                 font.weight: Font.DemiBold
+            }
+
+            Text {
+                text: "Quality"
+                color: Theme.inkDim
+                font.family: Theme.sans
+                font.pixelSize: 12
             }
 
             Segmented {
@@ -749,6 +1254,29 @@ ApplicationWindow {
                     onPicked: value => backend.startDelaySeconds = parseInt(value)
                 }
             }
+
+            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: Theme.strokeSoft }
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 1
+
+                Text {
+                    text: "Shortcuts"
+                    color: Theme.ink
+                    font.family: Theme.sans
+                    font.pixelSize: 13
+                    font.weight: Font.Medium
+                }
+                Text {
+                    Layout.fillWidth: true
+                    text: "Bind `remcorderctl toggle` (or pause / stop) to a compositor shortcut to control recordings from anywhere."
+                    color: Theme.inkFaint
+                    font.family: Theme.sans
+                    font.pixelSize: 11
+                    wrapMode: Text.WordWrap
+                }
+            }
         }
     }
 
@@ -762,25 +1290,6 @@ ApplicationWindow {
             color: "transparent"
             border.width: 1
             border.color: Theme.stroke
-        }
-
-        component ResizeGrip: MouseArea {
-            property int edges: 0
-            acceptedButtons: Qt.LeftButton
-            onPressed: windowChrome.startResize(root, edges)
-        }
-
-        ResizeGrip {
-            edges: Qt.LeftEdge
-            cursorShape: Qt.SizeHorCursor
-            width: 5
-            anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
-        }
-        ResizeGrip {
-            edges: Qt.RightEdge
-            cursorShape: Qt.SizeHorCursor
-            width: 5
-            anchors { right: parent.right; top: parent.top; bottom: parent.bottom }
         }
     }
 }

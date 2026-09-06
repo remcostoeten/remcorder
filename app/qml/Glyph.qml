@@ -137,6 +137,22 @@ Canvas {
             line(4.6, 4.6, 11.4, 11.4)
             line(11.4, 4.6, 4.6, 11.4)
             break
+        case "keys":
+            roundRect(2.2, 4.2, 11.6, 7.6, 1.6, false)
+            line(4.6, 6.6, 5.4, 6.6)
+            line(7.6, 6.6, 8.4, 6.6)
+            line(10.6, 6.6, 11.4, 6.6)
+            line(5.4, 9.4, 10.6, 9.4)
+            break
+        case "trash":
+            line(3.4, 5, 12.6, 5)
+            line(6.4, 5, 6.4, 3.4)
+            line(6.4, 3.4, 9.6, 3.4)
+            line(9.6, 3.4, 9.6, 5)
+            line(4.6, 5, 5.3, 12.8)
+            line(5.3, 12.8, 10.7, 12.8)
+            line(10.7, 12.8, 11.4, 5)
+            break
         case "minimize":
             line(4, 8.4, 12, 8.4)
             break
@@ -197,6 +213,15 @@ Canvas {
         case "plus":
             line(8, 3.6, 8, 12.4)
             line(3.6, 8, 12.4, 8)
+            break
+        case "pencil":
+            poly([3, 13, 3.4, 10.2, 10.8, 2.8, 13.2, 5.2, 5.8, 12.6], true, false)
+            line(9.4, 4.2, 11.8, 6.6)
+            break
+        case "reveal":
+            poly([2.2, 4.6, 2.2, 12.8, 13.8, 12.8, 13.8, 6.2, 7.6, 6.2, 6.2, 4.6], true, false)
+            line(8, 7.9, 8, 11.3)
+            poly([6.5, 9.8, 8, 11.3, 9.5, 9.8], false, false)
             break
         case "headphones":
             arc(8, 8.6, 5.6, Math.PI, Math.PI * 2)

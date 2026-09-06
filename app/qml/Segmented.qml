@@ -22,6 +22,24 @@ Rectangle {
     border.width: 1
     border.color: Theme.stroke
 
+    activeFocusOnTab: true
+    Accessible.role: Accessible.RadioButton
+    Accessible.name: options.length > 0 && options[activeIndex] ? options[activeIndex].label : ""
+
+    function step(delta) {
+        if (options.length === 0)
+            return
+        const next = (activeIndex + delta + options.length) % options.length
+        picked(options[next].value)
+    }
+
+    Keys.onLeftPressed: step(-1)
+    Keys.onRightPressed: step(1)
+    Keys.onUpPressed: step(-1)
+    Keys.onDownPressed: step(1)
+
+    FocusRing {}
+
     Rectangle {
         width: seg.cellWidth
         height: seg.height - 8

@@ -1,0 +1,17 @@
+name: Feature request
+description: Suggest a change to Remcorder.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: Describe the recording task and what gets in the way today.
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested change
+      description: How would you expect this to work? Include alternatives if you have them.
+    validations:
+      required: true

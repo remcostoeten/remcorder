@@ -2,6 +2,7 @@ package recorder
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -66,6 +67,40 @@ while true; do sleep 0.05; done
 	}
 	if string(data) != "finalized" {
 		t.Fatalf("output = %q, want finalized", data)
+	}
+}
+
+func TestDiscardRemovesOutput(t *testing.T) {
+	tempDirectory := t.TempDir()
+	binary := writeFakeRecorder(t, tempDirectory, `
+output=""
+for argument in "$@"; do output="$argument"; done
+printf "partial" > "$output"
+trap 'printf "finalized" > "$output"; exit 0' INT
+while true; do sleep 0.05; done
+`)
+	engine := testRecorder(tempDirectory, binary)
+
+	started, err := engine.Start()
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	discarded, err := engine.Discard(ctx)
+	if err != nil {
+		t.Fatalf("Discard() error = %v", err)
+	}
+	if discarded.Recording {
+		t.Fatalf("Discard() state = %#v, want idle", discarded)
+	}
+	if discarded.LastOutputFile != "" {
+		t.Fatalf("LastOutputFile = %q, want empty after discard", discarded.LastOutputFile)
+	}
+	if _, statErr := os.Stat(started.OutputFile); !os.IsNotExist(statErr) {
+		t.Fatalf("output %q still exists after discard (stat err = %v)", started.OutputFile, statErr)
 	}
 }
 
@@ -212,4 +247,56 @@ func writeFakeRecorder(t *testing.T, directory, body string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func TestRenameMovesTheLastOutput(t *testing.T) {
+	tempDirectory := t.TempDir()
+	binary := writeFakeRecorder(t, tempDirectory, `
+output=""
+for argument in "$@"; do output="$argument"; done
+trap 'printf "finalized" > "$output"; exit 0' INT
+while true; do sleep 0.05; done
+`)
+	engine := testRecorder(tempDirectory, binary)
+
+	if _, err := engine.Rename("nothing"); !errors.Is(err, ErrNothingToRename) {
+		t.Fatalf("Rename() before any recording error = %v, want ErrNothingToRename", err)
+	}
+
+	started, err := engine.Start()
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, err := engine.Stop(ctx); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+
+	renamed, err := engine.Rename("demo clip")
+	if err != nil {
+		t.Fatalf("Rename() error = %v", err)
+	}
+	want := filepath.Join(filepath.Dir(started.OutputFile), "demo clip"+filepath.Ext(started.OutputFile))
+	if renamed.LastOutputFile != want {
+		t.Fatalf("LastOutputFile = %q, want %q", renamed.LastOutputFile, want)
+	}
+	if _, err := os.Stat(started.OutputFile); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("original file still present: %v", err)
+	}
+	data, err := os.ReadFile(want)
+	if err != nil || string(data) != "finalized" {
+		t.Fatalf("renamed file = %q, %v", data, err)
+	}
+
+	if err := os.WriteFile(filepath.Join(tempDirectory, "taken.mp4"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.Rename("taken.mp4"); err == nil {
+		t.Fatal("Rename() onto an existing file succeeded, want error")
+	}
+	if _, err := engine.Rename("   "); err == nil {
+		t.Fatal("Rename() with an empty name succeeded, want error")
+	}
 }

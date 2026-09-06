@@ -46,10 +46,29 @@ Window {
     color: Theme.canvas
     flags: Qt.Window | Qt.FramelessWindowHint
 
+    readonly property real inMs: trimRange.first.value * 1000
+    readonly property real outMs: trimRange.second.value * 1000
+
+    function seekTo(ms) {
+        trimPlayer.position = Math.max(0, Math.min(trimPlayer.duration, Math.round(ms)))
+    }
+
+    function playSelection() {
+        if (trimPlayer.position < inMs || trimPlayer.position >= outMs)
+            seekTo(inMs)
+        trimPlayer.play()
+    }
+
     MediaPlayer {
         id: trimPlayer
         videoOutput: trimPreview.videoSink
         audioOutput: AudioOutput { muted: true }
+        onPositionChanged: {
+            if (trimWindow.awaitingPreviewFrame || !trimWindow.rangeInitialized)
+                return
+            if (playbackState === MediaPlayer.PlayingState && position >= trimWindow.outMs)
+                trimWindow.seekTo(trimWindow.inMs)
+        }
         onDurationChanged: function() {
             if (duration > 0 && !trimWindow.rangeInitialized) {
                 const seconds = duration / 1000
@@ -196,7 +215,7 @@ Window {
                         if (trimPlayer.playbackState === MediaPlayer.PlayingState)
                             trimPlayer.pause()
                         else
-                            trimPlayer.play()
+                            trimWindow.playSelection()
                     }
                 }
 
@@ -210,6 +229,65 @@ Window {
                 }
             }
 
+            Item {
+                id: scrubBar
+
+                Layout.fillWidth: true
+                Layout.preferredHeight: 14
+                Layout.bottomMargin: -6
+                z: 1
+
+                readonly property real trackX: trimRange.leftPadding
+                readonly property real trackWidth: trimRange.availableWidth
+                readonly property real fraction: trimPlayer.duration > 0
+                    ? trimPlayer.position / trimPlayer.duration
+                    : 0
+
+                function seekAt(localX) {
+                    if (trimPlayer.duration <= 0)
+                        return
+                    const ratio = Math.max(0, Math.min(1, (localX - trackX) / trackWidth))
+                    trimWindow.seekTo(ratio * trimPlayer.duration)
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onPressed: mouse => scrubBar.seekAt(mouse.x)
+                    onPositionChanged: mouse => {
+                        if (pressed)
+                            scrubBar.seekAt(mouse.x)
+                    }
+                }
+
+                Item {
+                    id: playhead
+
+                    x: scrubBar.trackX + scrubBar.fraction * scrubBar.trackWidth - width / 2
+                    y: 0
+                    width: 8
+                    height: scrubBar.height + 22
+                    visible: trimPlayer.duration > 0
+
+                    Rectangle {
+                        anchors.top: parent.top
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: 8
+                        height: 8
+                        radius: 2
+                        color: Theme.ink
+                    }
+                    Rectangle {
+                        anchors.top: parent.top
+                        anchors.topMargin: 4
+                        anchors.bottom: parent.bottom
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: 2
+                        color: Theme.ink
+                    }
+                }
+            }
+
             RangeSlider {
                 id: trimRange
                 Layout.fillWidth: true
@@ -217,8 +295,8 @@ Window {
                 from: 0
                 to: Math.max(0.25, trimPlayer.duration / 1000)
                 stepSize: 0.1
-                first.onMoved: trimPlayer.position = first.value * 1000
-                second.onMoved: trimPlayer.position = second.value * 1000
+                first.onMoved: trimWindow.seekTo(first.value * 1000)
+                second.onMoved: trimWindow.seekTo(second.value * 1000)
 
                 background: Item {
                     x: trimRange.leftPadding
@@ -253,10 +331,10 @@ Window {
                     width: 16
                     height: 16
                     radius: 8
-                    color: "#FFFFFF"
+                    color: activeFocus ? Theme.focusInk : "#FFFFFF"
                     border.width: 4
                     border.color: Theme.focusBlue
-                    scale: trimRange.first.pressed ? 1.15 : 1
+                    scale: trimRange.first.pressed || activeFocus ? 1.15 : 1
 
                     Behavior on scale { NumberAnimation { duration: 110 } }
                 }
@@ -268,10 +346,10 @@ Window {
                     width: 16
                     height: 16
                     radius: 8
-                    color: "#FFFFFF"
+                    color: activeFocus ? Theme.focusInk : "#FFFFFF"
                     border.width: 4
                     border.color: Theme.focusBlue
-                    scale: trimRange.second.pressed ? 1.15 : 1
+                    scale: trimRange.second.pressed || activeFocus ? 1.15 : 1
 
                     Behavior on scale { NumberAnimation { duration: 110 } }
                 }

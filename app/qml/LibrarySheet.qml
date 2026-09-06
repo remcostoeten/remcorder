@@ -19,6 +19,7 @@ Popup {
     height: parent ? parent.height : 0
     padding: 0
     modal: true
+    focus: true
     closePolicy: Popup.CloseOnEscape
 
     enter: Transition {
@@ -156,7 +157,7 @@ Popup {
                     }
 
                     GhostButton {
-                        opacity: rowHover.hovered ? 1 : 0.4
+                        opacity: rowHover.hovered ? 1 : 0.75
                         implicitWidth: 34
                         implicitHeight: 30
                         glyph: "open"
@@ -166,7 +167,17 @@ Popup {
                         Behavior on opacity { NumberAnimation { duration: 130 } }
                     }
                     GhostButton {
-                        opacity: rowHover.hovered ? 1 : 0.4
+                        opacity: rowHover.hovered ? 1 : 0.75
+                        implicitWidth: 34
+                        implicitHeight: 30
+                        glyph: "reveal"
+                        Accessible.name: "Show in folder"
+                        onClicked: backend.revealRecording(row.modelData)
+
+                        Behavior on opacity { NumberAnimation { duration: 130 } }
+                    }
+                    GhostButton {
+                        opacity: rowHover.hovered ? 1 : 0.75
                         visible: row.isLatest
                         implicitWidth: 34
                         implicitHeight: 30
@@ -177,7 +188,7 @@ Popup {
                         Behavior on opacity { NumberAnimation { duration: 130 } }
                     }
                     GhostButton {
-                        opacity: rowHover.hovered ? 1 : 0.4
+                        opacity: rowHover.hovered ? 1 : 0.75
                         implicitWidth: 34
                         implicitHeight: 30
                         glyph: "trim"

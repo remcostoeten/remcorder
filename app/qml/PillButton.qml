@@ -6,25 +6,46 @@ Rectangle {
 
     property string glyph: ""
     property string hint: ""
+    property string label: ""
     property color accent: Theme.ink
+    property bool active: false
 
     signal activated()
 
-    width: 30
+    readonly property bool labelled: label.length > 0
+
+    width: labelled ? content.implicitWidth + 18 : 30
     height: 30
     radius: 9
-    color: hover.hovered ? Theme.surfaceTop : "transparent"
+    color: hover.hovered || labelled ? Theme.surfaceTop : "transparent"
 
     Behavior on color { ColorAnimation { duration: 120 } }
+    Behavior on width { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
 
-    Glyph {
+    Row {
+        id: content
         anchors.centerIn: parent
-        name: button.glyph
-        width: 14
-        height: 14
-        tint: hover.hovered ? button.accent : Theme.inkDim
+        spacing: 6
 
-        Behavior on tint { ColorAnimation { duration: 120 } }
+        Glyph {
+            anchors.verticalCenter: parent.verticalCenter
+            name: button.glyph
+            width: 14
+            height: 14
+            tint: hover.hovered || button.active ? button.accent : Theme.inkDim
+
+            Behavior on tint { ColorAnimation { duration: 120 } }
+        }
+
+        Text {
+            anchors.verticalCenter: parent.verticalCenter
+            visible: button.labelled
+            text: button.label
+            color: button.accent
+            font.family: Theme.sans
+            font.pixelSize: 11
+            font.weight: Font.DemiBold
+        }
     }
 
     HoverHandler { id: hover; cursorShape: Qt.PointingHandCursor }
@@ -33,6 +54,13 @@ Rectangle {
     ToolTip.visible: hover.hovered && hint.length > 0
     ToolTip.text: hint
     ToolTip.delay: 400
+
+    activeFocusOnTab: true
+    Keys.onSpacePressed: button.activated()
+    Keys.onReturnPressed: button.activated()
+    Keys.onEnterPressed: button.activated()
+
+    FocusRing {}
 
     Accessible.role: Accessible.Button
     Accessible.name: hint

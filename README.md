@@ -1,373 +1,151 @@
 <p align="center">
-  <img src="packaging/icons/remcorder-128.png" width="88" alt="Remcorder logo" />
+  <img src="docs/assets/readme-banner.png" width="960" alt="Remcorder — Screen recording for Linux" />
 </p>
-
-<h1 align="center">Remcorder</h1>
 
 <p align="center">
-  A native control center and a reliable background service around<br />
-  <a href="https://git.dec05eba.com/gpu-screen-recorder/about/"><code>gpu-screen-recorder</code></a>,
-  for GPU-accelerated screen recording on Linux.<br />
-  Qt 6 window, system tray, click-through overlay, CLI, and a trim editor,<br />
-  all talking to one daemon that owns the recording lifecycle.
+  <a href="https://github.com/remcostoeten/remcorder/releases">Downloads</a> ·
+  <a href="docs/usage.md">User guide</a> ·
+  <a href="https://github.com/remcostoeten/remcorder/issues">Report a bug</a>
 </p>
 
-Recording is a daemon, not a window. It listens on a per-user Unix socket, so a
-compositor keybind, the tray, the CLI, and the GUI are all just clients. Close
-the window mid-recording and nothing stops. `SIGINT` is handled gracefully, so
-MP4 files are finalized instead of corrupted.
+Remcorder is a Linux screen recorder with a small Qt window, tray controls, and a
+CLI for keyboard shortcuts. It uses **gpu-screen-recorder** for capture and saves
+recordings locally. Pick a screen or region, hit record, then trim the result.
 
-- Start, pause, resume, stop, toggle, and inspect a recording over the socket
-- Direct monitor capture by default, portal capture on request
-- Drag-to-select region capture, spanning displays, remembered between sessions
-- Desktop audio, configurable FPS/codec/quality, timestamped filenames
-- Machine-readable JSON status for panels and scripts
-- A compact, click-through QML overlay that appears only while recording
-- A Qt 6 control center: monitor/audio discovery, quality presets, persistent
-  settings, tray controls, save notifications
-- A live microphone meter with peak hold, headphone listen-back, and a gain
-  slider wired to the real PipeWire source volume
-- A non-destructive trim editor with video preview and hardware-accelerated
-  `-trim.mp4` export, plus optional experimental motion blur
+Recording runs in a separate background service, so closing the window won't
+stop your capture. The app, tray, and CLI all control the same recording.
+
+<p align="center">
+  <img src="docs/assets/app.png" width="480" alt="Remcorder window with capture mode, audio controls, quality settings, and the record button" />
+</p>
+
+## What it does
+
+- Record a monitor, a selected region, or a window through the desktop portal.
+- Capture desktop audio and your microphone, with a live input meter and gain control.
+- Pause and resume from the app, tray, recording pill, or a keyboard shortcut.
+- Show keystrokes, draw on screen, or add a floating webcam bubble for walkthroughs.
+- Rename a finished recording, open its folder, or trim it into a separate file.
+- Set frame rate, codec, quality, a start delay, and sound cues.
+
+Some overlays need compositor support or input permissions. See the
+[compatibility notes](#compatibility) before enabling them.
 
 ## Install
 
-### Arch Linux (package)
+### Arch Linux
 
-Every tagged release publishes a pacman package. This is the shortest path, and
-the one to prefer if you are not developing Remcorder:
+Download the `.pkg.tar.zst` from [Releases](https://github.com/remcostoeten/remcorder/releases),
+then run this from the directory containing the downloaded package:
 
 ```sh
-gh release download --repo remcostoeten/remcorder --pattern '*.pkg.tar.zst'
-sudo pacman -U remcorder-*.pkg.tar.zst
-systemctl --user enable --now remcorder.service remcorder-overlay.service
+sudo pacman -U ./remcorder-*.pkg.tar.zst
+systemctl --user enable --now remcorder.service
+remcorder
 ```
 
-The package installs to `/usr`, pulls in `gpu-screen-recorder` and the Qt 6
-runtime, and suggests `ffmpeg` and `libpulse` for trimming, motion blur, and the
-microphone meter. `gh` is required because the repository is private.
+The package includes the app, daemon, CLI, and desktop entry. Install `ffmpeg`
+for trimming and `libpulse` for the microphone controls. If there isn't a package
+for the version you want yet, build from source below.
 
-### From a checkout
+### From source
 
-Installs to `~/.local` and leaves the package alone:
+You'll need a C++20 compiler, CMake, Go (see [go.mod](go.mod)), Qt 6 development
+packages, and the `gpu-screen-recorder` executable on your `PATH`. The prerequisite
+script installs the packages listed for your distribution using `sudo`, then
+checks the tools. Review [the package list](scripts/packages.conf) first if you'd
+rather install them yourself.
 
 ```sh
+git clone https://github.com/remcostoeten/remcorder.git
+cd remcorder
 ./scripts/pre-reqs.sh
 make install
-systemctl --user enable --now remcorder.service remcorder-overlay.service
+systemctl --user enable --now remcorder.service
+remcorder
 ```
 
-`scripts/pre-reqs.sh` reports what is missing per distribution rather than
-installing anything behind your back; `scripts/packages.conf` holds the package
-names it maps to.
+`make install` runs the project checks and installs to `~/.local`. Add
+`~/.local/bin` to your `PATH` if your shell doesn't already include it.
+On distributions other than Arch, you may need to install `gpu-screen-recorder`
+separately. Remcorder needs its command-line executable, not just a Flatpak app.
 
-Recordings default to the XDG Videos directory, under `Recordings`.
+## Your first recording
 
-## Use
+1. Choose a monitor, **Region**, or portal capture in the app.
+2. Set desktop audio and microphone input, then press the record button.
+3. Stop from the floating pill or tray. Open, rename, or trim the saved file.
 
-Launch **Remcorder** from the desktop application menu, or run `remcorder`. The
-graphical application can start the background service automatically, and
-settings are saved with Qt's standard per-user storage.
+Files go into `Recordings` inside your XDG Videos directory by default.
+Trim exports create a new file and keep the original.
 
-### Live in the system tray
+To start the app in the tray, use `remcorder --tray`. From a source checkout,
+`make tray` also installs it and sets up tray autostart.
 
-```sh
-make tray
-```
+## Keyboard shortcuts and scripts
 
-That builds, installs, writes `~/.config/autostart/remcorder-tray.desktop`, and
-relaunches Remcorder straight into the tray with no window. The tray menu starts,
-pauses, stops, and opens recordings; clicking the icon opens the window, and
-closing the window returns it to the tray instead of quitting.
+Bind these commands in your desktop or compositor settings:
 
 ```sh
-make tray-off   # remove the autostart entry and stop the tray instance
-remcorder --tray
-```
-
-`--tray` is ignored when the desktop has no tray, or when `--trim` is passed, so
-the app never starts invisible with no way to reach it.
-
-### Start delay and sound cues
-
-**Capture → Start delay** (Off / 3s / 5s / 10s) holds the recording back so you
-can bring the right window forward first. During the countdown the hero card
-shows the seconds left and the record button turns into a cancel button; `Esc`,
-the tray's stop entry, and clicking the button all abort it.
-
-**Capture → Sound cues** plays a synthesized two-note ping when a recording
-starts, a falling pair when it stops, and a tick per countdown second. The tones
-are generated in memory and played through the default output device, so they do
-not depend on the system bell being enabled. Toggling the setting on plays a
-sample ping.
-
-### Microphone
-
-Turning **Sound → Microphone** on reveals a live input meter with peak hold, a
-**Listen** button that plays the microphone through the default output, and a
-**Gain** slider.
-
-Listen-back is disabled while recording, and switches itself off when a recording
-starts, because desktop-audio capture would otherwise record the loopback. Use
-headphones while listening.
-
-The gain slider is not monitor-only: it sets the PipeWire source volume through
-`pactl`, so it changes what is recorded, and stays applied system-wide until
-changed again. The monitor stream is only open while the window is visible and
-the microphone is enabled.
-
-### Trimming
-
-After a recording is saved, choose **Trim**. The editor provides a muted video
-preview and a range slider. Export always creates a new file and never modifies
-the source. Progress and completion show in both the main window and the tray,
-and closing the window is safe because the export continues in the tray.
-
-The editor also carries the experimental **Motion blur** toggle, which blends
-successive frames as the copy is encoded. Subtle, Smooth, and Strong blend 2, 3,
-or 5 frames. Blur is a per-export choice rather than a persistent setting, so
-nothing is processed unless you ask for it. The result is named
-`recording-trim.mp4`, or `recording-trim-blur.mp4` when blur is on.
-
-You can also open the editor directly:
-
-```sh
-remcorder --trim /path/to/video.mp4
-```
-
-### CLI
-
-```sh
-remcorderctl start
-remcorderctl status
-remcorderctl pause
-remcorderctl resume
-remcorderctl toggle-pause
-remcorderctl stop
 remcorderctl toggle
-remcorderctl --json status
-remcorderctl start --delay 3s
-remcorderctl stop --open              # open the recording when it stops
-remcorderctl stop --open-dir          # open the recording's folder when it stops
+remcorderctl toggle-pause
 ```
 
-`--delay` only applies to `start` and waits before sending the command, so you
-can switch windows before capture begins. `--open`/`--open-dir` only fire on
-`stop`/`toggle` calls that actually end a recording, and use `xdg-open` to launch
-the file or folder in your default application.
-
-Bind `remcorderctl toggle` to a compositor shortcut. For example, in Hyprland:
+For example, in Hyprland:
 
 ```ini
 bind = SUPER SHIFT, R, exec, remcorderctl toggle
 bind = SUPER SHIFT, P, exec, remcorderctl toggle-pause
 ```
 
-### Daemon options
+Other useful commands:
 
-For compositor-neutral portal selection, override the service with
-`systemctl --user edit remcorder.service`:
-
-```ini
-[Service]
-ExecStart=
-ExecStart=%h/.local/bin/remcorderd -capture portal
+```sh
+remcorderctl --delay 3s start
+remcorderctl --open-dir stop
+remcorderctl --json status
+remcorder --trim /path/to/video.mp4
 ```
 
-```text
--capture screen|portal|region|DP-1
--region 1280x720+320+180
--fps 60
--audio default_output
--codec h264|hevc|av1
--quality medium|high|very_high|ultra
--output-dir /path/to/recordings
--cursor=true|false
-```
+CLI options go **before** the command. The [user guide](docs/usage.md) covers
+all commands, overlays, audio, and daemon settings.
 
-Run `gpu-screen-recorder --list-monitors` and
-`gpu-screen-recorder --list-audio-devices` to discover exact source names.
+## Compatibility
 
-### Region capture
+Remcorder targets Linux with a systemd user session. Capture and codec support
+depend on your GPU, drivers, desktop session, and `gpu-screen-recorder`.
 
-Pick **Region** under Capture and drag a rectangle; the overlay dims every
-display, follows the drag across monitors, and shows the live pixel size. Esc or
-right-click cancels. The chosen rectangle is stored as `WxH+X+Y` and reused
-until you reselect, so a keybound `remcorderctl toggle` keeps recording the same
-area. `-region` is only honoured when the capture source is `region`, and the
-daemon refuses to start a region recording without one.
+| Feature | Requirements and limits |
+| --- | --- |
+| Portal capture | A working desktop screencast portal |
+| Overlays on Wayland | LayerShellQt and a compositor with layer-shell support; GNOME falls back to ordinary windows |
+| Keystrokes and annotation pen | Read access to keyboard devices under `/dev/input`; see the [setup instructions](docs/usage.md#keystroke-overlay) |
+| Keystroke labels | Currently assume a US keyboard layout |
+| Click highlights | KDE Plasma's KWin mouse click effect |
+| Trim export | `ffmpeg`; motion blur is experimental |
+| Microphone controls | `pactl` through PipeWire's PulseAudio compatibility layer or PulseAudio |
 
-Coordinates follow the session: Wayland compositors are addressed in logical
-coordinates (like `slurp`), X11 in device pixels (like `slop`).
+The keystroke overlay shows input from any application, including passwords.
+Pause or stop recording before entering anything private. The annotation pen
+also monitors input while enabled in the running app.
+
+The native app includes its own recording overlays. Enable
+`remcorder-overlay.service` only when you want the standalone overlay for CLI
+use; running both can show duplicates.
 
 ## Development
 
 ```sh
-make check                # go test, go vet, Release cmake build, qmllint
-go run ./cmd/remcorderd
-cmake -S . -B build && cmake --build build
-./build/remcorder
-```
-
-The QML indicator polls a private, atomically updated state snapshot in the user
-runtime directory. It never controls recording itself, keeping the recorder
-lifecycle independent from the UI.
-
-```text
-app/             Qt 6 control center (C++ backend + QML)
-cmd/remcorderd   background daemon that owns the recording lifecycle
-cmd/remcorderctl CLI client for shortcuts and scripts
-internal/        recorder engine and the Unix-socket control protocol
-overlay/         click-through recording indicator
-packaging/       desktop entries, brand icons, and the Arch PKGBUILD
-systemd/         user units
-```
-
-### Icons
-
-`packaging/icons/remcorder-<size>.png` is the application mark. `make install`
-and the PKGBUILD fan those out into `share/icons/hicolor/<size>x<size>/apps/`,
-which is what `Icon=remcorder` in the desktop entries resolves against.
-`packaging/icons/tray/` holds the small-size tray exports.
-
-Both sets are also compiled into the binary under the `:/branding` resource
-prefix, so `app/Branding.h` can hand the window and the tray a real icon before
-anything is installed. Adding a size means adding it to the `FILES` list in
-`CMakeLists.txt`, the size list in `app/Branding.h`, and, for application sizes,
-`ICON_SIZES` in the `Makefile` plus the matching loop in the PKGBUILD.
-
-The exports are raster, generated from the artwork in the brand asset pack. There
-is no vector master; regenerate the PNGs from the pack rather than editing them
-in place.
-
-### Git
-
-The repository is private: <https://github.com/remcostoeten/remcorder>, default
-branch `daddy`, cloned over HTTPS with the `gh` credential helper.
-
-```sh
-gh repo clone remcostoeten/remcorder     # or: git clone https://github.com/remcostoeten/remcorder.git
-cd remcorder
-./scripts/pre-reqs.sh
 make check
 ```
 
-To use SSH instead:
+This runs Go tests, `go vet`, the Qt release build, and QML lint checks.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the source layout and development setup.
+Release instructions and artwork are in [docs/releasing.md](docs/releasing.md).
 
-```sh
-git remote set-url origin git@github.com:remcostoeten/remcorder.git
-```
+## Credits and license
 
-Work on a branch, never straight on `daddy`:
+Capture is handled by [gpu-screen-recorder](https://git.dec05eba.com/gpu-screen-recorder/about/).
+The interface uses Qt 6; the daemon and CLI are written in Go.
 
-```sh
-git switch -c feat/mic-meter
-make check
-git add -p
-git commit -m "feat(ui): add microphone level meter"
-git push -u origin feat/mic-meter
-gh pr create --fill
-```
-
-Commit messages follow Conventional Commits, so the subject reads as
-`type(scope): imperative summary` under about 72 characters:
-
-```text
-feat(ui):    a user-visible capability
-fix(app):    a defect, with the symptom in the body
-refactor:    behaviour-preserving restructuring
-perf:        measured improvement, with numbers in the body
-docs:        README and comments only
-chore:       build files, packaging, dependencies
-```
-
-Common operations:
-
-```sh
-git status -sb                   # short status with upstream tracking
-git switch daddy && git pull --ff-only
-git rebase daddy                 # keep a feature branch current
-git commit --amend --no-edit     # fold a fixup into the tip commit
-git restore --staged path        # unstage without losing the edit
-git restore path                 # discard an unwanted local edit
-git log --oneline --graph -20
-git diff daddy...HEAD            # exactly what a PR would contain
-```
-
-Before pushing, `make check` must pass. Build output lives in `build/` and is
-ignored, as are the `remcorderd` and `remcorderctl` binaries produced by a bare
-`make` and any stray `*.mp4` recordings. Keep recordings out of the repository.
-
-## Continuous integration
-
-Two workflows run against the `daddy` branch.
-
-**CI** (`.github/workflows/ci.yml`) runs `make check` in an `archlinux:base-devel`
-container on every push and pull request. These are the same four steps you run
-locally, so a green local check means a green CI check.
-
-**Release** (`.github/workflows/release.yml`) fires on a `v*` tag. It runs
-`make check`, builds a source tarball with `git archive`, stamps `pkgver` from
-the tag, builds the package with `makepkg` as an unprivileged user, and uploads
-the `.pkg.tar.zst` and the PKGBUILD to a GitHub Release.
-
-Two things build fine locally but not in the container. Both are already
-handled, so do not remove them:
-
-- The job runs as root while the workspace belongs to the runner user, so `git`
-  rejects it as *dubious ownership*. The release workflow marks the workspace
-  safe before calling `git archive`.
-- The source tarball extracts inside a git tree owned by another user, so Go's
-  VCS stamping aborts the build. The PKGBUILD sets `GOFLAGS=-buildvcs=false`; a
-  release build takes its version from `pkgver`, not from git.
-
-## Releasing
-
-Releases are cut with [`releaser`](https://github.com/remcostoeten/releaser),
-configured by `releaser.config.json`. The version lives in **one** place,
-`pkgver` in `packaging/pkgbuild/PKGBUILD`, and `CMakeLists.txt` is kept in step
-by a match-counted replacement, so the two can never drift apart.
-
-From a clean `daddy` that is in sync with origin:
-
-```sh
-releaser plan --bump patch     # read-only: shows the plan and changes nothing
-releaser --bump patch          # execute after it asks
-```
-
-That rewrites `pkgver`, syncs `CMakeLists.txt`, commits `chore(release): vX.Y.Z`,
-tags, and pushes the branch and the tag. The tag is what triggers the release
-workflow, so watch it and confirm the package was actually produced:
-
-```sh
-gh run watch "$(gh run list --workflow=release.yml --limit 1 --json databaseId -q '.[0].databaseId')"
-gh release view "v$(sed -n 's/^pkgver=//p' packaging/pkgbuild/PKGBUILD)"
-```
-
-Never edit `pkgver` by hand and never tag manually. Both bypass the single
-source of truth and produce a tag whose PKGBUILD disagrees with it.
-
-If a release is interrupted partway, finish it rather than starting a new one:
-
-```sh
-releaser status
-releaser resume
-```
-
-To validate packaging changes without cutting a release, build the package the
-way CI does:
-
-```sh
-ver=$(sed -n 's/^pkgver=//p' packaging/pkgbuild/PKGBUILD)
-git archive --format=tar.gz --prefix="remcorder-$ver/" \
-  -o "packaging/pkgbuild/remcorder-$ver.tar.gz" HEAD
-(cd packaging/pkgbuild && makepkg --noconfirm --force)
-git clean -fdx packaging/pkgbuild
-```
-
-Run `git archive` from the repository root. From inside `packaging/pkgbuild` it
-silently archives only that subdirectory, and the build fails on missing sources.
-
-## License
-
-[MIT](LICENSE)
+Remcorder is [MIT licensed](LICENSE).
