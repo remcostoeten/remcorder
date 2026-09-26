@@ -4,7 +4,7 @@ import QtQuick.Controls
 Switch {
     id: toggle
 
-    property color tint: Theme.focusBlue
+    property color tint: Theme.signal
 
     implicitWidth: 42
     implicitHeight: 24

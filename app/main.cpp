@@ -44,11 +44,14 @@ int main(int argc, char *argv[])
     QQmlApplicationEngine engine;
     auto *trimPreview = new TrimPreview;
     auto *savedPreview = new TrimPreview;
+    auto *blurPreview = new TrimPreview;
     engine.addImageProvider(QStringLiteral("trimPreview"), trimPreview);
     engine.addImageProvider(QStringLiteral("savedPreview"), savedPreview);
+    engine.addImageProvider(QStringLiteral("blurPreview"), blurPreview);
     engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
     engine.rootContext()->setContextProperty(QStringLiteral("trimPreview"), trimPreview);
     engine.rootContext()->setContextProperty(QStringLiteral("savedPreview"), savedPreview);
+    engine.rootContext()->setContextProperty(QStringLiteral("blurPreview"), blurPreview);
     engine.rootContext()->setContextProperty(QStringLiteral("windowChrome"), &windowChrome);
     engine.rootContext()->setContextProperty(QStringLiteral("annotationInput"), &annotationInput);
     engine.rootContext()->setContextProperty(QStringLiteral("singleInstance"), &singleInstance);

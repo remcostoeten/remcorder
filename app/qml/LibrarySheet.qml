@@ -39,6 +39,16 @@ Popup {
     background: Rectangle { color: Theme.canvas }
     Overlay.modal: Rectangle { color: "#C0030304" }
 
+    VideoDropZone {
+        parent: sheet.contentItem.parent
+        anchors.fill: parent
+        enabled: sheet.opened
+        onVideoDropped: path => {
+            sheet.close()
+            sheet.trimRequested(path)
+        }
+    }
+
     contentItem: ColumnLayout {
         spacing: 0
 
@@ -259,7 +269,7 @@ Popup {
             GhostButton {
                 implicitHeight: 34
                 glyph: "plus"
-                text: "Trim a file…"
+                text: "Edit a video…"
                 enabled: !backend.processingTrim
                 onClicked: {
                     const path = backend.chooseVideoToTrim()

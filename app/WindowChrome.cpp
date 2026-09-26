@@ -56,7 +56,9 @@ bool WindowChrome::pinAbove(QQuickWindow *window, int anchors, int left, int top
     layer->setMargins(pinned.margins);
     layer->setExclusiveZone(0);
     layer->setKeyboardInteractivity(LayerShellQt::Window::KeyboardInteractivityNone);
+#ifdef REMCORDER_LAYERSHELL_HAS_ACTIVATE_ON_SHOW
     layer->setActivateOnShow(false);
+#endif
     layer->setScope(QStringLiteral("remcorder-overlay"));
 
     m_pinned.insert(window, pinned);

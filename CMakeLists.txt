@@ -5,7 +5,7 @@ project(Remcorder VERSION 0.2.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS
+find_package(Qt6 6.8 REQUIRED COMPONENTS
     Core
     DBus
     Gui
@@ -17,7 +17,7 @@ find_package(Qt6 6.5 REQUIRED COMPONENTS
     Widgets
 )
 
-qt_standard_project_setup(REQUIRES 6.5)
+qt_standard_project_setup(REQUIRES 6.8)
 qt_policy(SET QTP0004 NEW)
 
 # Wayland compositors ignore Qt::WindowStaysOnTopHint; LayerShellQt keeps the
@@ -73,6 +73,7 @@ qt_add_qml_module(remcorder
         app/qml/LibrarySheet.qml
         app/qml/SavedRecordingCard.qml
         app/qml/TrimWindow.qml
+        app/qml/VideoDropZone.qml
         app/qml/Main.qml
         app/qml/RegionSelector.qml
 )
@@ -114,6 +115,19 @@ target_link_libraries(remcorder PRIVATE
 if(LayerShellQt_FOUND)
     target_compile_definitions(remcorder PRIVATE REMCORDER_HAVE_LAYERSHELLQT)
     target_link_libraries(remcorder PRIVATE LayerShellQt::Interface)
+
+    # Window::setActivateOnShow arrived after LayerShellQt 6.3 (Debian 13).
+    include(CheckCXXSourceCompiles)
+    set(CMAKE_REQUIRED_LIBRARIES LayerShellQt::Interface Qt6::Gui)
+    check_cxx_source_compiles("
+        #include <LayerShellQt/Window>
+        int main() { static_cast<LayerShellQt::Window *>(nullptr)->setActivateOnShow(false); }
+    " REMCORDER_LAYERSHELL_HAS_ACTIVATE_ON_SHOW)
+    unset(CMAKE_REQUIRED_LIBRARIES)
+    if(REMCORDER_LAYERSHELL_HAS_ACTIVATE_ON_SHOW)
+        target_compile_definitions(remcorder PRIVATE REMCORDER_LAYERSHELL_HAS_ACTIVATE_ON_SHOW)
+    endif()
+
     message(STATUS "LayerShellQt found: overlays pinned above other windows on Wayland")
 else()
     message(STATUS "LayerShellQt not found: overlays rely on Qt::WindowStaysOnTopHint (X11 only)")

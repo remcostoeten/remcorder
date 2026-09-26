@@ -91,15 +91,40 @@ dismiss it or start a new one; the Library and the tray menu also offer
 
 ## Trimming
 
-After a recording is saved, choose **Trim**. The editor provides a muted video
-preview and a range slider. Export always creates a new file and never modifies
-the source. Progress and completion show in both the main window and the tray,
+After a recording is saved, choose **Trim**. The editor works on any video, not
+only your recordings. Open one by:
+
+- dropping a video file on the main window, the Library, or the editor itself,
+- choosing **Edit video** in the main window, **Edit a video…** in the Library,
+  or **Open…** in the editor header,
+- picking **Open with → Remcorder** in your file manager.
+
+The editor provides a video preview, the audio waveform, and a range slider.
+Click or drag on the waveform to seek; the selected range is highlighted.
+Export always creates a new file and never modifies the source. It is saved next
+to the source, or in your recordings folder when the source folder is not
+writable. Progress and completion show in both the main window and the tray,
 and closing the window is safe because the export continues in the tray.
 
+The **Audio** card lowers the volume of the copy (0 to 100%) or mutes it, which
+drops the audio track entirely. The preview plays at the same volume once you
+press Play, and the waveform scales to match. Files without audio show
+**No audio track** and the card is disabled.
+
 The editor also carries the experimental **Motion blur** toggle, which blends
-successive frames as the copy is encoded. Subtle, Smooth, and Strong blend 2, 3,
-or 5 frames. Blur is a per-export choice rather than a persistent setting, so
-nothing is processed unless you ask for it. The result is named
+successive frames as the copy is encoded. It is frame blending, not true motion
+blur: scrolling and window drags look smoother, content that does not move stays
+sharp, and very fast motion shows as a few ghost copies rather than a streak.
+Subtle, Smooth, and Strong blend roughly 30, 50, and 85 ms of footage, so the
+look is the same at any frame rate (2, 3, and 5 frames at 60 fps). Recordings
+are resampled to a constant frame rate first so idle gaps are not blended.
+
+**Preview at playhead** renders two seconds from the playhead with the chosen
+strength, using hardware decoding when available. **Split** shows the original
+on the left and the blurred result on the right; **Blurred** shows the whole
+frame. Changing the strength re-renders the preview. Blur is a per-export
+choice rather than a persistent setting, so nothing is processed unless you ask
+for it. The result is named
 `recording-trim.mp4`, or `recording-trim-blur.mp4` when blur is on.
 
 You can also open the editor directly:

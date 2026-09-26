@@ -6,6 +6,7 @@
 #include <QJsonObject>
 #include <QProcess>
 #include <QSystemTrayIcon>
+#include <QUrl>
 #include <QVariantList>
 #include <QVariantMap>
 
@@ -182,11 +183,20 @@ public:
     Q_INVOKABLE void openOutputDirectory();
     Q_INVOKABLE void openLastRecording();
     Q_INVOKABLE QString chooseVideoToTrim();
+    Q_INVOKABLE QString videoPathFromUrl(const QUrl &url) const;
+    Q_INVOKABLE QUrl fileUrl(const QString &path) const;
     Q_INVOKABLE void exportTrim(const QString &source,
                                 double startSeconds,
                                 double endSeconds,
                                 bool motionBlur,
-                                const QString &motionBlurStrength);
+                                const QString &motionBlurStrength,
+                                double volume);
+    Q_INVOKABLE void loadWaveform(const QString &path);
+    Q_INVOKABLE void cancelWaveform();
+    Q_INVOKABLE void renderBlurPreview(const QString &source,
+                                       double startSeconds,
+                                       const QString &strength);
+    Q_INVOKABLE void cancelBlurPreview();
     Q_INVOKABLE void openLastTrimmedRecording();
     Q_INVOKABLE QString formatDuration(qint64 seconds) const;
     Q_INVOKABLE void copyLastOutputPath();
@@ -204,6 +214,9 @@ signals:
     void settingsChanged();
     void errorChanged();
     void trimStateChanged();
+    void waveformReady(const QString &path, const QVariantList &peaks);
+    void blurPreviewReady(const QString &blurredPath, const QString &splitPath);
+    void blurPreviewFailed(const QString &message);
     void micMonitorChanged();
     void micLevelChanged();
     void micGainChanged();
@@ -241,6 +254,9 @@ private:
     void playCountdownTick(bool last);
     void updateTrimProgress();
     void finishTrim(int exitCode, QProcess::ExitStatus status);
+    void readWaveformSamples();
+    void finishWaveform(int exitCode, QProcess::ExitStatus status);
+    void finishBlurPreview(int exitCode, QProcess::ExitStatus status);
     QString trimOutputPath(const QString &source, bool motionBlur) const;
     QStringList videoEncoderOptions(QString *encoder) const;
     QString socketPath() const;
@@ -358,4 +374,14 @@ private:
     QMenu *m_recentMenu = nullptr;
     QAction *m_quitAction = nullptr;
     QProcess *m_trimProcess = nullptr;
+    QProcess *m_waveformProcess = nullptr;
+    QString m_waveformSource;
+    QByteArray m_waveformRemainder;
+    QList<float> m_waveformBlocks;
+    float m_waveformBlockPeak = 0.0f;
+    int m_waveformBlockFill = 0;
+    QProcess *m_blurPreviewProcess = nullptr;
+    QString m_blurPreviewBlurred;
+    QString m_blurPreviewSplit;
+    int m_blurPreviewRevision = 0;
 };

@@ -12,6 +12,7 @@ Popup {
     y: anchorItem ? anchorItem.height + 8 : 0
     margins: 12
     padding: 12
+    popupType: Popup.Window
     modal: false
     focus: true
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent

@@ -25,7 +25,10 @@ stop your capture. The app, tray, and CLI all control the same recording.
 - Capture desktop audio and your microphone, with a live input meter and gain control.
 - Pause and resume from the app, tray, recording pill, or a keyboard shortcut.
 - Show keystrokes, draw on screen, or add a floating webcam bubble for walkthroughs.
-- Rename a finished recording, open its folder, or trim it into a separate file.
+- Rename a finished recording or open its folder.
+- Trim any video into a separate copy. Drop a file on the window, pick one with
+  **Edit video**, or use **Open with** in your file manager.
+- Lower the volume or mute the copy, with the audio waveform shown under the preview.
 - Set frame rate, codec, quality, a start delay, and sound cues.
 
 Some overlays need compositor support or input permissions. See the
@@ -50,11 +53,13 @@ for the version you want yet, build from source below.
 
 ### From source
 
-You'll need a C++20 compiler, CMake, Go (see [go.mod](go.mod)), Qt 6 development
-packages, and the `gpu-screen-recorder` executable on your `PATH`. The prerequisite
-script installs the packages listed for your distribution using `sudo`, then
-checks the tools. Review [the package list](scripts/packages.conf) first if you'd
-rather install them yourself.
+You'll need a C++20 compiler, CMake, Go (see [go.mod](go.mod)), Qt 6.8 or newer,
+and the `gpu-screen-recorder` executable on your `PATH`. The prerequisite script
+supports Arch, Debian 13+, Ubuntu 25.04+, Fedora, and openSUSE and their
+derivatives. It shows what it will install, asks before using `sudo`, then checks
+every tool and version. Pass `--yes` to skip the prompts, or `--check` to only
+check. Review [the package list](scripts/packages.conf) first if you'd rather
+install them yourself.
 
 ```sh
 git clone https://github.com/remcostoeten/remcorder.git
@@ -67,8 +72,9 @@ remcorder
 
 `make install` runs the project checks and installs to `~/.local`. Add
 `~/.local/bin` to your `PATH` if your shell doesn't already include it.
-On distributions other than Arch, you may need to install `gpu-screen-recorder`
-separately. Remcorder needs its command-line executable, not just a Flatpak app.
+On Fedora the script offers a COPR for `gpu-screen-recorder`. On Debian and
+Ubuntu you'll need to [build it yourself](https://git.dec05eba.com/gpu-screen-recorder/about/).
+Remcorder needs its command-line executable, not just a Flatpak app.
 
 ## Your first recording
 
@@ -122,7 +128,7 @@ depend on your GPU, drivers, desktop session, and `gpu-screen-recorder`.
 | Keystrokes and annotation pen | Read access to keyboard devices under `/dev/input`; see the [setup instructions](docs/usage.md#keystroke-overlay) |
 | Keystroke labels | Currently assume a US keyboard layout |
 | Click highlights | KDE Plasma's KWin mouse click effect |
-| Trim export | `ffmpeg`; motion blur is experimental |
+| Trim export and waveform | `ffmpeg`; motion blur is experimental |
 | Microphone controls | `pactl` through PipeWire's PulseAudio compatibility layer or PulseAudio |
 
 The keystroke overlay shows input from any application, including passwords.

@@ -12,9 +12,30 @@ Window {
     property bool awaitingPreviewFrame: false
     property bool motionBlur: false
     property string motionBlurStrength: "smooth"
+    property string loadError: ""
+    property real exportVolume: 1.0
+    property bool muteAudio: false
+    property bool previewAudible: false
+    property var waveformPeaks: []
+    property bool waveformLoading: false
+    readonly property bool hasAudio: waveformPeaks.length > 0
+    property string blurPreviewState: "idle"
+    property string blurPreviewMode: "split"
+    property string blurPreviewBlurred: ""
+    property string blurPreviewSplit: ""
+    property string blurPreviewError: ""
+    readonly property bool blurPreviewShowing: blurPreviewState === "ready"
 
     function openForSource(path) {
         sourcePath = path
+        loadError = ""
+        exportVolume = 1.0
+        muteAudio = false
+        previewAudible = false
+        waveformPeaks = []
+        waveformLoading = true
+        backend.loadWaveform(path)
+        closeBlurPreview()
         rangeInitialized = false
         awaitingPreviewFrame = true
         motionBlur = false
@@ -22,14 +43,63 @@ Window {
         show()
         raise()
         requestActivate()
-        trimPlayer.source = "file://" + encodeURI(path)
+        trimPlayer.source = backend.fileUrl(path)
         trimPlayer.play()
     }
 
     function dismiss() {
         awaitingPreviewFrame = false
+        backend.cancelWaveform()
+        closeBlurPreview()
         trimPlayer.stop()
         hide()
+    }
+
+    function blurPreviewStart() {
+        const latest = Math.max(trimRange.first.value, trimRange.second.value - 2)
+        return Math.min(Math.max(trimPlayer.position / 1000, trimRange.first.value), latest)
+    }
+
+    function renderBlurPreview() {
+        trimPlayer.pause()
+        blurPlayer.stop()
+        blurPreviewError = ""
+        blurPreviewState = "rendering"
+        backend.renderBlurPreview(sourcePath, blurPreviewStart(), motionBlurStrength)
+    }
+
+    function closeBlurPreview() {
+        backend.cancelBlurPreview()
+        blurPlayer.stop()
+        blurPlayer.source = ""
+        blurPreview.clear()
+        blurPreviewState = "idle"
+        blurPreviewError = ""
+    }
+
+    function showBlurPreview() {
+        blurPlayer.source = backend.fileUrl(
+            blurPreviewMode === "split" ? blurPreviewSplit : blurPreviewBlurred)
+        blurPlayer.play()
+    }
+
+    onMotionBlurStrengthChanged: {
+        if (blurPreviewState !== "idle")
+            renderBlurPreview()
+    }
+    onMotionBlurChanged: {
+        if (!motionBlur)
+            closeBlurPreview()
+    }
+    onBlurPreviewModeChanged: {
+        if (blurPreviewShowing)
+            showBlurPreview()
+    }
+
+    function chooseAnotherSource() {
+        const path = backend.chooseVideoToTrim()
+        if (path.length > 0)
+            openForSource(path)
     }
 
     function baseName(path) {
@@ -38,11 +108,11 @@ Window {
     }
 
     width: 660
-    height: 720
+    height: 840
     minimumWidth: 540
-    minimumHeight: 620
+    minimumHeight: 740
     visible: false
-    title: "Trim · Remcorder"
+    title: "Edit video · Remcorder"
     color: Theme.canvas
     flags: Qt.Window | Qt.FramelessWindowHint
 
@@ -54,15 +124,27 @@ Window {
     }
 
     function playSelection() {
+        if (blurPreviewState !== "idle")
+            closeBlurPreview()
         if (trimPlayer.position < inMs || trimPlayer.position >= outMs)
             seekTo(inMs)
+        previewAudible = true
         trimPlayer.play()
     }
 
     MediaPlayer {
         id: trimPlayer
         videoOutput: trimPreview.videoSink
-        audioOutput: AudioOutput { muted: true }
+        audioOutput: AudioOutput {
+            muted: !trimWindow.previewAudible || trimWindow.muteAudio
+            volume: trimWindow.exportVolume
+        }
+        onErrorOccurred: (error, errorString) => {
+            trimWindow.awaitingPreviewFrame = false
+            trimWindow.loadError = errorString.length > 0
+                ? errorString
+                : "This file could not be played."
+        }
         onPositionChanged: {
             if (trimWindow.awaitingPreviewFrame || !trimWindow.rangeInitialized)
                 return
@@ -78,6 +160,39 @@ Window {
                     trimWindow.rangeInitialized = true
                 })
             }
+        }
+    }
+
+    MediaPlayer {
+        id: blurPlayer
+        videoOutput: blurPreview.videoSink
+        loops: MediaPlayer.Infinite
+    }
+
+    Connections {
+        target: backend
+
+        function onBlurPreviewReady(blurredPath, splitPath) {
+            if (trimWindow.blurPreviewState !== "rendering")
+                return
+            trimWindow.blurPreviewBlurred = blurredPath
+            trimWindow.blurPreviewSplit = splitPath
+            trimWindow.blurPreviewState = "ready"
+            trimWindow.showBlurPreview()
+        }
+
+        function onBlurPreviewFailed(message) {
+            if (trimWindow.blurPreviewState !== "rendering")
+                return
+            trimWindow.blurPreviewError = message
+            trimWindow.blurPreviewState = "failed"
+        }
+
+        function onWaveformReady(path, peaks) {
+            if (path !== trimWindow.sourcePath)
+                return
+            trimWindow.waveformPeaks = peaks
+            trimWindow.waveformLoading = false
         }
     }
 
@@ -132,7 +247,7 @@ Window {
                 }
 
                 Text {
-                    text: "Trim a copy"
+                    text: "Edit a copy"
                     color: Theme.ink
                     font.family: Theme.sans
                     font.pixelSize: 14
@@ -146,6 +261,17 @@ Window {
                     font.family: Theme.mono
                     font.pixelSize: 11
                     elide: Text.ElideMiddle
+                }
+
+                GhostButton {
+                    implicitHeight: 30
+                    fill: "transparent"
+                    bordered: false
+                    glyph: "folder"
+                    text: "Open…"
+                    textColor: Theme.inkDim
+                    Accessible.name: "Open a different video"
+                    onClicked: trimWindow.chooseAnotherSource()
                 }
 
                 WindowButton {
@@ -192,10 +318,87 @@ Window {
                     fillMode: Image.PreserveAspectFit
                 }
 
+                Image {
+                    id: blurFrame
+                    anchors.fill: parent
+                    anchors.margins: 1
+                    visible: trimWindow.blurPreviewShowing
+                    source: visible && blurPreview.available
+                        ? "image://blurPreview/frame?" + blurPreview.revision
+                        : ""
+                    cache: false
+                    fillMode: Image.PreserveAspectFit
+
+                    Rectangle {
+                        anchors.fill: parent
+                        color: "#000000"
+                        z: -1
+                    }
+                }
+
+                Row {
+                    x: blurFrame.x + (blurFrame.width - width) / 2
+                    y: blurFrame.y + (blurFrame.height - blurFrame.paintedHeight) / 2 + 10
+                    width: blurFrame.paintedWidth
+                    visible: trimWindow.blurPreviewShowing
+
+                    Repeater {
+                        model: trimWindow.blurPreviewMode === "split"
+                            ? ["Original", "Motion blur"]
+                            : ["Motion blur preview"]
+
+                        Item {
+                            id: previewTag
+                            required property string modelData
+                            width: trimWindow.blurPreviewMode === "split" ? parent.width / 2 : parent.width
+                            height: 22
+
+                            Rectangle {
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                width: previewLabel.implicitWidth + 16
+                                height: parent.height
+                                radius: 6
+                                color: "#CC0A0A0C"
+
+                                Text {
+                                    id: previewLabel
+                                    anchors.centerIn: parent
+                                    text: previewTag.modelData
+                                    color: Theme.ink
+                                    font.family: Theme.sans
+                                    font.pixelSize: 11
+                                    font.weight: Font.Medium
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    anchors.fill: parent
+                    anchors.margins: 1
+                    radius: 11
+                    visible: trimWindow.blurPreviewState === "rendering"
+                    color: "#B0000000"
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "Rendering a 2 second blur preview…"
+                        color: Theme.ink
+                        font.family: Theme.sans
+                        font.pixelSize: 12
+                    }
+                }
+
                 Text {
                     anchors.centerIn: parent
-                    visible: !trimPreview.available
-                    text: "Loading preview…"
+                    width: parent.width - 40
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.WordWrap
+                    visible: !trimPreview.available || trimWindow.loadError.length > 0
+                    text: trimWindow.loadError.length > 0
+                        ? "Can't preview this file: " + trimWindow.loadError
+                        : "Loading preview…"
                     color: Theme.inkFaint
                     font.family: Theme.sans
                     font.pixelSize: 12
@@ -226,6 +429,94 @@ Window {
                     color: Theme.ink
                     font.family: Theme.mono
                     font.pixelSize: 13
+                }
+            }
+
+            Item {
+                id: waveform
+
+                Layout.fillWidth: true
+                Layout.preferredHeight: 56
+
+                readonly property real gain: trimWindow.muteAudio ? 0 : trimWindow.exportVolume
+
+                Rectangle {
+                    x: scrubBar.trackX
+                    width: scrubBar.trackWidth
+                    height: parent.height
+                    radius: 8
+                    color: "#0C0C0F"
+                    border.width: 1
+                    border.color: Theme.strokeSoft
+                }
+
+                Canvas {
+                    id: waveCanvas
+
+                    x: scrubBar.trackX + 4
+                    y: 4
+                    width: scrubBar.trackWidth - 8
+                    height: parent.height - 8
+
+                    readonly property real selectionStart: trimRange.first.position
+                    readonly property real selectionEnd: trimRange.second.position
+
+                    onSelectionStartChanged: requestPaint()
+                    onSelectionEndChanged: requestPaint()
+                    onWidthChanged: requestPaint()
+                    Connections {
+                        target: trimWindow
+                        function onWaveformPeaksChanged() { waveCanvas.requestPaint() }
+                    }
+                    Connections {
+                        target: waveform
+                        function onGainChanged() { waveCanvas.requestPaint() }
+                    }
+
+                    onPaint: {
+                        const ctx = getContext("2d")
+                        ctx.reset()
+                        const peaks = trimWindow.waveformPeaks
+                        if (peaks.length === 0)
+                            return
+                        const step = width / peaks.length
+                        const barWidth = Math.max(1, step - (step > 3 ? 1 : 0))
+                        const middle = height / 2
+                        for (let i = 0; i < peaks.length; ++i) {
+                            const position = (i + 0.5) / peaks.length
+                            const inside = position >= selectionStart && position <= selectionEnd
+                            const half = Math.max(0.75, peaks[i] * waveform.gain * middle)
+                            ctx.fillStyle = inside ? Theme.focusBlue : "#34343C"
+                            ctx.fillRect(i * step, middle - half, barWidth, half * 2)
+                        }
+                    }
+                }
+
+                Rectangle {
+                    x: scrubBar.trackX + scrubBar.fraction * scrubBar.trackWidth - 1
+                    width: 2
+                    height: parent.height
+                    color: Theme.ink
+                    visible: trimPlayer.duration > 0 && trimWindow.hasAudio
+                }
+
+                Text {
+                    anchors.centerIn: parent
+                    visible: !trimWindow.hasAudio
+                    text: trimWindow.waveformLoading ? "Reading audio…" : "No audio track"
+                    color: Theme.inkFaint
+                    font.family: Theme.sans
+                    font.pixelSize: 11
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onPressed: mouse => scrubBar.seekAt(mouse.x)
+                    onPositionChanged: mouse => {
+                        if (pressed)
+                            scrubBar.seekAt(mouse.x)
+                    }
                 }
             }
 
@@ -435,7 +726,8 @@ Window {
                             }
                             Text {
                                 Layout.fillWidth: true
-                                text: "Blend frames together as the copy is exported."
+                                text: "Blends neighbouring frames so scrolling and window drags look "
+                                    + "smoother. Very fast motion shows as ghost copies; still content stays sharp."
                                 color: Theme.inkDim
                                 font.family: Theme.sans
                                 font.pixelSize: 12
@@ -462,6 +754,172 @@ Window {
                         current: trimWindow.motionBlurStrength
                         onPicked: value => trimWindow.motionBlurStrength = value
                     }
+
+                    RowLayout {
+                        visible: trimWindow.motionBlur
+                        Layout.fillWidth: true
+                        spacing: 8
+
+                        GhostButton {
+                            implicitHeight: 32
+                            glyph: trimWindow.blurPreviewShowing ? "close" : "play"
+                            text: trimWindow.blurPreviewShowing
+                                ? "Close preview"
+                                : trimWindow.blurPreviewState === "rendering"
+                                ? "Rendering…"
+                                : "Preview at playhead"
+                            enabled: trimWindow.rangeInitialized
+                                && trimWindow.loadError.length === 0
+                                && trimWindow.blurPreviewState !== "rendering"
+                            Accessible.name: "Preview motion blur for two seconds from the playhead"
+                            onClicked: {
+                                if (trimWindow.blurPreviewShowing)
+                                    trimWindow.closeBlurPreview()
+                                else
+                                    trimWindow.renderBlurPreview()
+                            }
+                        }
+
+                        Segmented {
+                            visible: trimWindow.blurPreviewShowing
+                            Layout.fillWidth: true
+                            implicitHeight: 32
+                            options: [
+                                { value: "split", label: "Split" },
+                                { value: "blurred", label: "Blurred" }
+                            ]
+                            current: trimWindow.blurPreviewMode
+                            onPicked: value => trimWindow.blurPreviewMode = value
+                        }
+
+                        Text {
+                            visible: trimWindow.blurPreviewState === "failed"
+                            Layout.fillWidth: true
+                            text: "Preview failed: " + trimWindow.blurPreviewError
+                            color: Theme.signal
+                            font.family: Theme.sans
+                            font.pixelSize: 11
+                            elide: Text.ElideRight
+                        }
+                    }
+                }
+            }
+
+            Card {
+                Layout.fillWidth: true
+                implicitHeight: audioColumn.implicitHeight + 24
+                enabled: trimWindow.hasAudio
+                opacity: enabled ? 1 : 0.45
+
+                ColumnLayout {
+                    id: audioColumn
+                    anchors.fill: parent
+                    anchors.margins: 12
+                    spacing: 10
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 12
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 2
+
+                            Text {
+                                text: "Audio"
+                                color: Theme.ink
+                                font.family: Theme.sans
+                                font.pixelSize: 13
+                                font.weight: Font.Medium
+                            }
+                            Text {
+                                Layout.fillWidth: true
+                                text: trimWindow.muteAudio
+                                    ? "The copy is exported without sound."
+                                    : "Lower the volume of the exported copy."
+                                color: Theme.inkDim
+                                font.family: Theme.sans
+                                font.pixelSize: 12
+                                wrapMode: Text.WordWrap
+                            }
+                        }
+
+                        Text {
+                            text: "Mute"
+                            color: Theme.inkDim
+                            font.family: Theme.sans
+                            font.pixelSize: 12
+                        }
+                        ModernSwitch {
+                            checked: trimWindow.muteAudio
+                            onToggled: trimWindow.muteAudio = checked
+                            Accessible.name: "Remove audio from the exported copy"
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        visible: !trimWindow.muteAudio
+                        spacing: 9
+
+                        Glyph {
+                            Layout.preferredWidth: 14
+                            Layout.preferredHeight: 14
+                            name: "speaker"
+                            tint: Theme.inkDim
+                        }
+
+                        Slider {
+                            id: volumeSlider
+                            Layout.fillWidth: true
+                            from: 0
+                            to: 1
+                            stepSize: 0.01
+                            value: trimWindow.exportVolume
+                            onMoved: trimWindow.exportVolume = value
+                            Accessible.name: "Export volume"
+
+                            background: Rectangle {
+                                x: volumeSlider.leftPadding
+                                y: volumeSlider.topPadding + (volumeSlider.availableHeight - height) / 2
+                                width: volumeSlider.availableWidth
+                                height: 5
+                                radius: 2.5
+                                color: "#1D1D22"
+
+                                Rectangle {
+                                    width: volumeSlider.visualPosition * parent.width
+                                    height: parent.height
+                                    radius: 2.5
+                                    color: Theme.focusBlue
+                                }
+                            }
+
+                            handle: Rectangle {
+                                x: volumeSlider.leftPadding
+                                    + volumeSlider.visualPosition * (volumeSlider.availableWidth - width)
+                                y: volumeSlider.topPadding + (volumeSlider.availableHeight - height) / 2
+                                width: 15
+                                height: 15
+                                radius: 7.5
+                                color: volumeSlider.activeFocus ? Theme.focusInk : "#FFFFFF"
+                                border.width: 4
+                                border.color: Theme.focusBlue
+                                scale: volumeSlider.pressed || volumeSlider.activeFocus ? 1.15 : 1
+
+                                Behavior on scale { NumberAnimation { duration: 110 } }
+                            }
+                        }
+
+                        Text {
+                            Layout.preferredWidth: 34
+                            horizontalAlignment: Text.AlignRight
+                            text: Math.round(trimWindow.exportVolume * 100) + "%"
+                            color: Theme.inkDim
+                            font.family: Theme.mono
+                            font.pixelSize: 11
+                        }
+                    }
                 }
             }
 
@@ -480,21 +938,32 @@ Window {
                     implicitHeight: 44
                     tint: Theme.focusBlue
                     enabled: trimWindow.rangeInitialized
+                        && trimWindow.loadError.length === 0
+                        && !backend.processingTrim
+                        && !backend.recording
                         && trimRange.second.value - trimRange.first.value >= 0.25
                     text: trimWindow.motionBlur ? "Export blurred copy" : "Export trimmed copy"
                     onClicked: {
                         trimPlayer.pause()
+                        trimWindow.closeBlurPreview()
                         backend.exportTrim(
                             trimWindow.sourcePath,
                             trimRange.first.value,
                             trimRange.second.value,
                             trimWindow.motionBlur,
-                            trimWindow.motionBlurStrength)
+                            trimWindow.motionBlurStrength,
+                            trimWindow.muteAudio ? 0 : trimWindow.exportVolume)
                         trimWindow.dismiss()
                     }
                 }
             }
         }
+    }
+
+    VideoDropZone {
+        anchors.fill: parent
+        hint: "Drop to open instead"
+        onVideoDropped: path => trimWindow.openForSource(path)
     }
 
     Item {

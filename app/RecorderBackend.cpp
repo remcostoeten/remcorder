@@ -26,6 +26,7 @@
 #include <QLocalSocket>
 #include <QMediaDevices>
 #include <QMenu>
+#include <QMimeDatabase>
 #include <QProcess>
 #include <QRegularExpression>
 #include <QScopeGuard>
@@ -43,13 +44,21 @@ namespace {
 constexpr auto organization = "RemcoStoeten";
 constexpr auto application = "Remcorder";
 
-QString motionBlurFilter(const QString &strength)
+constexpr double kBlurPreviewSeconds = 2.0;
+
+QString frameRateFilter(double frameRate)
 {
-    int frames = 3;
+    return QStringLiteral("fps=%1").arg(frameRate, 0, 'f', 3);
+}
+
+QString blendFilter(const QString &strength, double frameRate)
+{
+    double shutterMilliseconds = 50.0;
     if (strength == QStringLiteral("subtle"))
-        frames = 2;
+        shutterMilliseconds = 30.0;
     else if (strength == QStringLiteral("strong"))
-        frames = 5;
+        shutterMilliseconds = 85.0;
+    const int frames = qBound(2, qRound(frameRate * shutterMilliseconds / 1000.0), 16);
 
     QStringList weights;
     for (int index = 1; index <= frames; ++index)
@@ -57,6 +66,39 @@ QString motionBlurFilter(const QString &strength)
     return QStringLiteral("tmix=frames=%1:weights=%2")
         .arg(frames)
         .arg(weights.join(QLatin1Char(' ')));
+}
+
+// Screen recordings are variable frame rate; resampling to a constant rate first
+// keeps the blend window a fixed length of time instead of spanning idle gaps.
+QString motionBlurFilter(const QString &strength, double frameRate)
+{
+    return frameRateFilter(frameRate) + QLatin1Char(',') + blendFilter(strength, frameRate);
+}
+
+double probeFrameRate(const QString &path)
+{
+    constexpr double fallback = 60.0;
+    const QString ffprobe = QStandardPaths::findExecutable(QStringLiteral("ffprobe"));
+    if (ffprobe.isEmpty())
+        return fallback;
+
+    QProcess probe;
+    probe.start(ffprobe, {
+        QStringLiteral("-v"), QStringLiteral("error"),
+        QStringLiteral("-select_streams"), QStringLiteral("v:0"),
+        QStringLiteral("-show_entries"), QStringLiteral("stream=r_frame_rate"),
+        QStringLiteral("-of"), QStringLiteral("csv=p=0"),
+        path,
+    });
+    if (!probe.waitForFinished(3000))
+        return fallback;
+
+    const QList<QByteArray> parts = probe.readAllStandardOutput().trimmed().split('/');
+    const double numerator = parts.value(0).toDouble();
+    const double denominator = parts.size() > 1 ? parts.at(1).toDouble() : 1.0;
+    if (numerator <= 0.0 || denominator <= 0.0)
+        return fallback;
+    return qBound(1.0, numerator / denominator, 240.0);
 }
 
 QByteArray renderTones(const QAudioFormat &format, const QList<QPair<double, int>> &tones)
@@ -95,6 +137,19 @@ QString firstValue(const QVariantList &items, const QString &fallback)
     if (items.isEmpty())
         return fallback;
     return items.first().toMap().value(QStringLiteral("value")).toString();
+}
+
+constexpr int kWaveformSampleRate = 4000;
+constexpr int kWaveformBlockSamples = 80;
+constexpr int kWaveformBuckets = 480;
+
+bool containsValue(const QVariantList &items, const QString &value)
+{
+    for (const QVariant &item : items) {
+        if (item.toMap().value(QStringLiteral("value")).toString() == value)
+            return true;
+    }
+    return false;
 }
 }
 
@@ -145,6 +200,8 @@ RecorderBackend::~RecorderBackend()
     }
     if (!m_trimTemporaryFile.isEmpty())
         QFile::remove(m_trimTemporaryFile);
+    cancelWaveform();
+    cancelBlurPreview();
 }
 
 bool RecorderBackend::trayAvailable() const
@@ -758,6 +815,9 @@ void RecorderBackend::cancelCountdown()
 
 void RecorderBackend::beginRecording()
 {
+    if (m_desktopAudioEnabled || m_microphoneEnabled)
+        refreshDevices();
+
     QStringList audio;
     if (m_desktopAudioEnabled)
         audio << m_outputDevice;
@@ -863,11 +923,12 @@ void RecorderBackend::refreshDevices()
     if (m_inputDevices.isEmpty())
         m_inputDevices.append(QVariantMap{{"value", "default_input"}, {"name", "Default input"}});
 
-    if (m_outputDevice.isEmpty())
+    if (!containsValue(m_outputDevices, m_outputDevice))
         m_outputDevice = firstValue(m_outputDevices, QStringLiteral("default_output"));
-    if (m_inputDevice.isEmpty())
+    if (!containsValue(m_inputDevices, m_inputDevice))
         m_inputDevice = firstValue(m_inputDevices, QStringLiteral("default_input"));
     emit devicesChanged();
+    emit settingsChanged();
 }
 
 void RecorderBackend::startService()
@@ -910,16 +971,36 @@ QString RecorderBackend::chooseVideoToTrim()
 {
     return QFileDialog::getOpenFileName(
         nullptr,
-        QStringLiteral("Choose a recording to trim"),
+        QStringLiteral("Choose a video to edit"),
         m_outputDirectory,
-        QStringLiteral("Video files (*.mp4 *.mkv *.webm *.mov);;All files (*)"));
+        QStringLiteral("Video files (*.mp4 *.m4v *.mkv *.webm *.mov *.avi *.wmv *.flv "
+                       "*.mpg *.mpeg *.ts *.mts *.m2ts *.3gp *.ogv);;All files (*)"));
+}
+
+QString RecorderBackend::videoPathFromUrl(const QUrl &url) const
+{
+    if (!url.isLocalFile())
+        return {};
+    const QFileInfo info(url.toLocalFile());
+    if (!info.isFile() || !info.isReadable())
+        return {};
+    const QMimeType type = QMimeDatabase().mimeTypeForFile(info);
+    if (!type.name().startsWith(QLatin1String("video/")))
+        return {};
+    return info.absoluteFilePath();
+}
+
+QUrl RecorderBackend::fileUrl(const QString &path) const
+{
+    return QUrl::fromLocalFile(path);
 }
 
 void RecorderBackend::exportTrim(const QString &source,
                                  double startSeconds,
                                  double endSeconds,
                                  bool motionBlur,
-                                 const QString &motionBlurStrength)
+                                 const QString &motionBlurStrength,
+                                 double volume)
 {
     if (m_recording || m_processingTrim) {
         setError(QStringLiteral("Wait for the current recording or post-processing task to finish."));
@@ -942,6 +1023,7 @@ void RecorderBackend::exportTrim(const QString &source,
 
     m_trimOutputFile = trimOutputPath(source, motionBlur);
     const QFileInfo outputInfo(m_trimOutputFile);
+    QDir().mkpath(outputInfo.absolutePath());
     m_trimTemporaryFile = outputInfo.dir().filePath(
         QStringLiteral(".%1.partial.mp4").arg(outputInfo.completeBaseName()));
     QFile::remove(m_trimTemporaryFile);
@@ -958,17 +1040,28 @@ void RecorderBackend::exportTrim(const QString &source,
         QStringLiteral("-i"), source,
         QStringLiteral("-t"), QString::number(selectedDuration, 'f', 3),
     };
+    const double gain = qBound(0.0, volume, 1.0);
+    const bool keepAudio = gain > 0.001;
     if (motionBlur)
-        arguments.append({QStringLiteral("-vf"), motionBlurFilter(motionBlurStrength)});
-    arguments.append({
-        QStringLiteral("-map"), QStringLiteral("0:v:0"),
-        QStringLiteral("-map"), QStringLiteral("0:a?"),
-        QStringLiteral("-c:v"), encoder,
-    });
+        arguments.append({QStringLiteral("-vf"),
+                          motionBlurFilter(motionBlurStrength, probeFrameRate(source))});
+    arguments.append({QStringLiteral("-map"), QStringLiteral("0:v:0")});
+    if (keepAudio)
+        arguments.append({QStringLiteral("-map"), QStringLiteral("0:a?")});
+    arguments.append({QStringLiteral("-c:v"), encoder});
     arguments.append(encoderOptions);
+    if (!keepAudio) {
+        arguments.append(QStringLiteral("-an"));
+    } else {
+        if (gain < 0.999)
+            arguments.append({QStringLiteral("-af"),
+                              QStringLiteral("volume=%1").arg(gain, 0, 'f', 3)});
+        arguments.append({
+            QStringLiteral("-c:a"), QStringLiteral("aac"),
+            QStringLiteral("-b:a"), QStringLiteral("192k"),
+        });
+    }
     arguments.append({
-        QStringLiteral("-c:a"), QStringLiteral("aac"),
-        QStringLiteral("-b:a"), QStringLiteral("192k"),
         QStringLiteral("-movflags"), QStringLiteral("+faststart"),
         QStringLiteral("-progress"), QStringLiteral("pipe:1"),
         QStringLiteral("-nostats"),
@@ -995,6 +1088,191 @@ void RecorderBackend::exportTrim(const QString &source,
     }
     emit trimStateChanged();
     updateTray();
+}
+
+void RecorderBackend::loadWaveform(const QString &path)
+{
+    cancelWaveform();
+    const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
+    if (ffmpeg.isEmpty() || !QFileInfo::exists(path)) {
+        emit waveformReady(path, {});
+        return;
+    }
+
+    m_waveformSource = path;
+    m_waveformRemainder.clear();
+    m_waveformBlocks.clear();
+    m_waveformBlockPeak = 0.0f;
+    m_waveformBlockFill = 0;
+    m_waveformProcess = new QProcess(this);
+    m_waveformProcess->setProcessChannelMode(QProcess::SeparateChannels);
+    connect(m_waveformProcess, &QProcess::readyReadStandardOutput,
+            this, &RecorderBackend::readWaveformSamples);
+    connect(m_waveformProcess, &QProcess::finished,
+            this, &RecorderBackend::finishWaveform);
+    m_waveformProcess->start(ffmpeg, {
+        QStringLiteral("-hide_banner"),
+        QStringLiteral("-loglevel"), QStringLiteral("error"),
+        QStringLiteral("-nostdin"),
+        QStringLiteral("-i"), path,
+        QStringLiteral("-map"), QStringLiteral("0:a:0"),
+        QStringLiteral("-ac"), QStringLiteral("1"),
+        QStringLiteral("-ar"), QString::number(kWaveformSampleRate),
+        QStringLiteral("-f"), QStringLiteral("s16le"),
+        QStringLiteral("-"),
+    });
+}
+
+void RecorderBackend::cancelWaveform()
+{
+    if (!m_waveformProcess)
+        return;
+    m_waveformProcess->disconnect(this);
+    m_waveformProcess->kill();
+    m_waveformProcess->waitForFinished(300);
+    m_waveformProcess->deleteLater();
+    m_waveformProcess = nullptr;
+}
+
+void RecorderBackend::readWaveformSamples()
+{
+    if (!m_waveformProcess)
+        return;
+    m_waveformRemainder += m_waveformProcess->readAllStandardOutput();
+    const qsizetype usable = m_waveformRemainder.size() & ~qsizetype(1);
+    const auto *samples = reinterpret_cast<const qint16 *>(m_waveformRemainder.constData());
+    for (qsizetype i = 0; i < usable / 2; ++i) {
+        m_waveformBlockPeak = qMax(m_waveformBlockPeak, std::abs(samples[i]) / 32768.0f);
+        if (++m_waveformBlockFill == kWaveformBlockSamples) {
+            m_waveformBlocks.append(m_waveformBlockPeak);
+            m_waveformBlockPeak = 0.0f;
+            m_waveformBlockFill = 0;
+        }
+    }
+    m_waveformRemainder.remove(0, usable);
+}
+
+void RecorderBackend::finishWaveform(int exitCode, QProcess::ExitStatus status)
+{
+    if (!m_waveformProcess)
+        return;
+    readWaveformSamples();
+    if (m_waveformBlockFill > 0)
+        m_waveformBlocks.append(m_waveformBlockPeak);
+    m_waveformProcess->deleteLater();
+    m_waveformProcess = nullptr;
+
+    QVariantList peaks;
+    if (status == QProcess::NormalExit && exitCode == 0 && !m_waveformBlocks.isEmpty()) {
+        const qsizetype blocks = m_waveformBlocks.size();
+        const qsizetype buckets = qMin<qsizetype>(kWaveformBuckets, blocks);
+        QList<float> bucketPeaks(buckets, 0.0f);
+        float loudest = 0.0f;
+        for (qsizetype i = 0; i < blocks; ++i) {
+            float &bucket = bucketPeaks[i * buckets / blocks];
+            bucket = qMax(bucket, m_waveformBlocks.at(i));
+            loudest = qMax(loudest, bucket);
+        }
+        const float scale = 1.0f / qMax(loudest, 0.05f);
+        peaks.reserve(buckets);
+        for (float peak : std::as_const(bucketPeaks))
+            peaks.append(qMin(1.0f, peak * scale));
+    }
+    m_waveformBlocks.clear();
+    emit waveformReady(m_waveformSource, peaks);
+}
+
+void RecorderBackend::renderBlurPreview(const QString &source,
+                                        double startSeconds,
+                                        const QString &strength)
+{
+    cancelBlurPreview();
+    const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
+    if (ffmpeg.isEmpty() || !QFileInfo::exists(source)) {
+        emit blurPreviewFailed(QStringLiteral("FFmpeg is unavailable, so no preview can be rendered."));
+        return;
+    }
+
+    QDir directory(QStandardPaths::writableLocation(QStandardPaths::CacheLocation)
+                         + QStringLiteral("/blur-preview"));
+    directory.removeRecursively();
+    directory.mkpath(QStringLiteral("."));
+    ++m_blurPreviewRevision;
+    m_blurPreviewBlurred = directory.filePath(
+        QStringLiteral("blurred-%1.mp4").arg(m_blurPreviewRevision));
+    m_blurPreviewSplit = directory.filePath(
+        QStringLiteral("split-%1.mp4").arg(m_blurPreviewRevision));
+
+    const double frameRate = probeFrameRate(source);
+    const QString graph = QStringLiteral(
+        "[0:v]scale='trunc(min(960,iw)/4)*4':-2,%1,split=2[original][blend];"
+        "[blend]%2,split=2[blurred][half];"
+        "[original]crop=iw/2:ih:0:0[left];"
+        "[half]crop=iw/2:ih:iw/2:0[right];"
+        "[left][right]hstack,drawbox=x=iw/2-1:y=0:w=2:h=ih:color=white@0.85:t=fill[split]")
+        .arg(frameRateFilter(frameRate), blendFilter(strength, frameRate));
+    const QStringList encode{
+        QStringLiteral("-an"),
+        QStringLiteral("-c:v"), QStringLiteral("libx264"),
+        QStringLiteral("-preset"), QStringLiteral("ultrafast"),
+        QStringLiteral("-crf"), QStringLiteral("20"),
+        QStringLiteral("-pix_fmt"), QStringLiteral("yuv420p"),
+    };
+
+    QStringList arguments{
+        QStringLiteral("-hide_banner"),
+        QStringLiteral("-loglevel"), QStringLiteral("error"),
+        QStringLiteral("-nostdin"),
+        QStringLiteral("-y"),
+        QStringLiteral("-hwaccel"), QStringLiteral("auto"),
+        QStringLiteral("-ss"), QString::number(qMax(0.0, startSeconds), 'f', 3),
+        QStringLiteral("-t"), QString::number(kBlurPreviewSeconds, 'f', 3),
+        QStringLiteral("-i"), source,
+        QStringLiteral("-filter_complex"), graph,
+        QStringLiteral("-map"), QStringLiteral("[blurred]"),
+    };
+    arguments.append(encode);
+    arguments.append(m_blurPreviewBlurred);
+    arguments.append({QStringLiteral("-map"), QStringLiteral("[split]")});
+    arguments.append(encode);
+    arguments.append(m_blurPreviewSplit);
+
+    m_blurPreviewProcess = new QProcess(this);
+    m_blurPreviewProcess->setProcessChannelMode(QProcess::SeparateChannels);
+    connect(m_blurPreviewProcess, &QProcess::finished,
+            this, &RecorderBackend::finishBlurPreview);
+    m_blurPreviewProcess->start(ffmpeg, arguments);
+}
+
+void RecorderBackend::cancelBlurPreview()
+{
+    if (!m_blurPreviewProcess)
+        return;
+    m_blurPreviewProcess->disconnect(this);
+    m_blurPreviewProcess->kill();
+    m_blurPreviewProcess->waitForFinished(300);
+    m_blurPreviewProcess->deleteLater();
+    m_blurPreviewProcess = nullptr;
+}
+
+void RecorderBackend::finishBlurPreview(int exitCode, QProcess::ExitStatus status)
+{
+    if (!m_blurPreviewProcess)
+        return;
+    const QString detail = QString::fromUtf8(m_blurPreviewProcess->readAllStandardError()).trimmed();
+    m_blurPreviewProcess->deleteLater();
+    m_blurPreviewProcess = nullptr;
+
+    const bool rendered = status == QProcess::NormalExit && exitCode == 0
+        && QFileInfo(m_blurPreviewBlurred).size() > 0
+        && QFileInfo(m_blurPreviewSplit).size() > 0;
+    if (rendered) {
+        emit blurPreviewReady(m_blurPreviewBlurred, m_blurPreviewSplit);
+        return;
+    }
+    emit blurPreviewFailed(detail.isEmpty()
+        ? QStringLiteral("The preview could not be rendered.")
+        : detail.section(QLatin1Char('\n'), -1));
 }
 
 void RecorderBackend::openLastTrimmedRecording()
@@ -1571,12 +1849,15 @@ void RecorderBackend::finishTrim(int exitCode, QProcess::ExitStatus status)
 QString RecorderBackend::trimOutputPath(const QString &source, bool motionBlur) const
 {
     const QFileInfo sourceInfo(source);
+    const QDir directory = QFileInfo(sourceInfo.absolutePath()).isWritable()
+        ? sourceInfo.dir()
+        : QDir(m_outputDirectory);
     const QString stem = sourceInfo.completeBaseName()
         + (motionBlur ? QStringLiteral("-trim-blur") : QStringLiteral("-trim"));
-    QString candidate = sourceInfo.dir().filePath(stem + QStringLiteral(".mp4"));
+    QString candidate = directory.filePath(stem + QStringLiteral(".mp4"));
     int suffix = 2;
     while (QFileInfo::exists(candidate)) {
-        candidate = sourceInfo.dir().filePath(
+        candidate = directory.filePath(
             QStringLiteral("%1-%2.mp4").arg(stem).arg(suffix++));
     }
     return candidate;

@@ -118,6 +118,14 @@ ApplicationWindow {
 
     TrimWindow { id: trimWindow }
 
+    VideoDropZone {
+        parent: root.contentItem
+        anchors.fill: parent
+        enabled: !root.live
+        hint: "Drop to trim or edit"
+        onVideoDropped: path => trimWindow.openForSource(path)
+    }
+
     LibrarySheet {
         id: library
         onTrimRequested: path => trimWindow.openForSource(path)
@@ -522,6 +530,22 @@ ApplicationWindow {
                 textColor: Theme.inkFaint
                 onClicked: library.open()
             }
+
+            GhostButton {
+                implicitHeight: 30
+                fill: "transparent"
+                bordered: false
+                glyph: "trim"
+                text: "Edit video"
+                textColor: Theme.inkFaint
+                enabled: !root.busy
+                Accessible.name: "Choose a video file to trim or edit"
+                onClicked: {
+                    const path = backend.chooseVideoToTrim()
+                    if (path.length > 0)
+                        trimWindow.openForSource(path)
+                }
+            }
         }
     }
 
@@ -546,7 +570,6 @@ ApplicationWindow {
                     font.weight: Font.DemiBold
                 }
                 ModernSwitch {
-                    tint: Theme.success
                     checked: backend.microphoneEnabled
                     onToggled: backend.microphoneEnabled = checked
                 }
@@ -681,7 +704,6 @@ ApplicationWindow {
                     font.weight: Font.DemiBold
                 }
                 ModernSwitch {
-                    tint: Theme.success
                     checked: backend.desktopAudioEnabled
                     onToggled: backend.desktopAudioEnabled = checked
                 }
@@ -750,6 +772,7 @@ ApplicationWindow {
 
                 ColumnLayout {
                     Layout.fillWidth: true
+                    Layout.preferredWidth: 1
                     spacing: 1
 
                     Text {
@@ -760,6 +783,7 @@ ApplicationWindow {
                         font.weight: Font.Medium
                     }
                     Text {
+                        Layout.fillWidth: true
                         text: "Include the cursor in the capture."
                         color: Theme.inkFaint
                         font.family: Theme.sans
@@ -767,7 +791,6 @@ ApplicationWindow {
                     }
                 }
                 ModernSwitch {
-                    tint: Theme.focusBlue
                     checked: backend.captureCursor
                     onToggled: backend.captureCursor = checked
                 }
@@ -787,6 +810,7 @@ ApplicationWindow {
 
                 ColumnLayout {
                     Layout.fillWidth: true
+                    Layout.preferredWidth: 1
                     spacing: 1
 
                     Text {
@@ -819,6 +843,7 @@ ApplicationWindow {
 
                 ColumnLayout {
                     Layout.fillWidth: true
+                    Layout.preferredWidth: 1
                     spacing: 1
 
                     Text {
@@ -904,6 +929,7 @@ ApplicationWindow {
                 spacing: 8
                 ColumnLayout {
                     Layout.fillWidth: true
+                    Layout.preferredWidth: 1
                     spacing: 1
 
                     Text {
@@ -974,6 +1000,7 @@ ApplicationWindow {
 
                 ColumnLayout {
                     Layout.fillWidth: true
+                    Layout.preferredWidth: 1
                     spacing: 1
 
                     Text {
